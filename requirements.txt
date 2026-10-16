@@ -1,0 +1,5 @@
+# Application / transfer-plane runtime dependencies.
+# Controller (Ryu) dependencies live in requirements-controller.txt and are
+# installed into a separate Python 3.8 environment (see README).
+Flask>=3.1,<4.0
+requests>=2.31,<3.0

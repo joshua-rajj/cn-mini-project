@@ -1,0 +1,160 @@
+               ​                                ​
+        COMPUTER NETWORKS - UE25CS243A
+ Mininet Installation Manual on Existing Linux VM (Ubuntu)
+Objective:
+   To install and configure Mininet on an already running Ubuntu-based virtual
+   machine and verify its functionality for network simulation.
+
+
+Introduction to Mininet:
+Mininet is a virtual testbed or network emulator enabling the development and testing
+of network tools and protocols. It uses lightweight virtualization to make a single
+system look like a complete network, running the same kernel, system, and user code.
+With a single command, Mininet can create a realistic virtual network on any type of
+machine (Virtual Machine (VM), cloud-hosted, or native). Therefore, it provides an
+inexpensive solution and streamlined development running in line with production
+networks.
+
+Mininet offers the following features:
+●​ Fast prototyping for new networking protocols.
+●​ Simplified testing for complex topologies without the need of buying expensive
+   hardware.
+●​ Realistic execution as it runs real code on the Unix and Linux kernels.
+●​ Open source environment backed by a large community contributing extensive
+   documentation.
+
+Mininet’s logical nodes can be connected into networks. These nodes are sometimes
+called containers, or more accurately, network namespaces. Containers consume
+sufficiently few resources that networks of over a thousand nodes have created,
+running on a single laptop. A Mininet container is a process (or group of processes)
+that no longer has access to all the host system’s native network interfaces.
+Containers are then assigned virtual Ethernet interfaces, which are connected to other
+containers through a virtual switch. Mininet connects a host and a switch using a
+virtual Ethernet (veth) link.
+
+Assumptions:
+   A virtual machine is already created using VMware / VirtualBox and is being used
+   for all Mininet related experiments.
+       The VM is running a Linux OS (Ubuntu 20.04 / 22.04 preferred)
+     •​ User has:
+     -​ Sudo privileges
+                                                                                     1
+                 ​                                ​
+      -​ Internet connectivity inside the VM
+
+System Preparation:
+      Before installing Mininet, ensure that the system is updated and ready. Run the
+      following commands in a terminal:
+           sudo apt update
+           sudo apt upgrade -y
+      This ensures all packages are up to date and avoid any dependency issues.
+
+Installing mininet
+  A.​ Method 1: Direct Installation (Simple and
+       recommended)
+      Install Mininet using Ubuntu’s package manager:
+           sudo apt install mininet -y
+
+      Note: In case apt install doesn’t work, use apt-get instead.
+
+      This installs:
+       •​    Mininet
+       •​    Open vSwitch
+       •​    Required dependencies
+
+    B.​    Method 2: Installation from source (Optional and
+           Advanced)
+​         Step 1: Install dependencies
+             sudo apt install git build-essential python3-pip -y
+
+​         Step 2: Clone repository
+             git clone https://github.com/mininet/mininet
+             cd mininet
+
+​         Step 3: Run installation script
+
+             sudo ./util/install.sh -a
+
+Verifying Installation
+Starting Mininet:
+             sudo mn
+
+                                                                                        2
+                ​                             ​
+
+    You should see:
+     •​   A default topology created
+     •​   Mininet CLI prompt (mininet>)
+
+Connectivity test:
+    Inside Mininet:
+         pingall
+
+    Expected result:
+     •​   All hosts successfully ping each other
+     •​   Output shows 0% packet loss
+
+Exit Mininet:
+         exit
+
+
+
+
+                                                   3
+             ​                             ​
+Running simple custom topology
+   Example: Single switch with 3 hosts
+       sudo mn --topo single,3
+
+   This creates:
+    •​    1 switch
+    •​    3 hosts
+
+
+
+
+Important commands
+   Command                       Purpose
+sudo mn          Start default topology
+pingall          Test connectivity
+nodes            List nodes
+net              View connections
+dump             Node details
+exit             Exit CLI
+
+
+                                               4
+              ​                               ​
+
+Cleanup and reset
+    To remove old configurations:
+         sudo mn -c
+
+Trouble shooting
+1.​ Command not found:
+    Reinstall Mininet:
+        sudo apt install mininet -y
+
+2.​ Permission issues
+    Always run with sudo (sudo mn, then the rest as per manual).
+
+3.​ Network issues within VM
+    Ensure:
+    VM network adapter is NAT or Bridged
+    Internet works (ping google.com)
+
+4.​ Open vSwitch Errors
+    ​ Install manually:
+          sudo apt install openvswitch-switch -y
+
+References:
+[1] Mininet overview - https://mininet.org/overview/
+[2] https://mininet.org/walkthrough/
+[3] https://github.com/mininet/mininet/blob/master/INSTALL
+[4] https://github.com/mininet/mininet/wiki/Documentation
+
+
+
+
+                                                                   5
+

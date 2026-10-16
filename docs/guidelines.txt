@@ -1,0 +1,83 @@
+            SDN-Socket Programming – Jackfruit Mini Project
+Goal:
+
+The objective of this project is to design, implement, and evaluate a networked application
+using low-level TCP/UDP socket programming integrated with SDN. The project should
+demonstrate a clear understanding of TCP/UDP communication, concurrency, protocol
+design, programmable network control, and performance evaluation within a Mininet-based
+environment.
+
+Mandatory Requirements:
+
+   •    The application must be implemented using TCP or UDP sockets as specified in the
+        project.
+   •    The project must include appropriate client, server, worker, broker, or peer components
+        based on the selected application.
+   •    The application should support multiple communicating nodes/clients wherever
+        applicable.
+   •    The application must be deployed and tested in a Mininet-based network topology.
+   •    The project should demonstrate interaction between the socket application and the
+        SDN-controlled network.
+   •    The complete system should run in a controlled Mininet + SDN controller + socket-
+        programming environment.
+   •    Students must provide the topology, source code, configuration, test cases, and
+        instructions required to reproduce the results.
+
+Final demo code should be shared in GitHub repo with complete documentation.
+
+Evalua&on Criteria
+ Deliverable                Component             Marks
+ D1 – 15     Problem Understanding & Architecture   2
+             TCP/UDP Socket Implementation          4
+             Mininet + SDN Implementation           4
+             Socket–SDN Integration                 3
+             Initial Testing & Demo                 2
+                             D1 Total              15
+ D2 – 25     Complete Application Functionality     4
+             Dynamic SDN Functionality              6
+             Challenging Scenario / Robustness      4
+             Performance Evaluation & Comparison    5
+             Documentation, Final Demo & Viva       6
+                             D2 Total              25
+                      TOTAL                        40
+Detailed Rubric
+    Component       Marks                       Evaluation Criteria
+Problem              2    Clear understanding of the assigned problem; well-defined
+Understanding &           objectives, system architecture, components, communication
+Architecture              flow, and expected network behavior.
+TCP/UDP Socket       4    Correct implementation of the specified TCP/UDP
+Implementation            communication using low-level sockets; appropriate
+                          client/server communication, connection or datagram
+                          handling, concurrency, error handling, and application-level
+                          message exchange.
+Mininet + SDN        4    Correct Mininet topology; functional SDN controller;
+Implementation            appropriate flow rules; proper host/switch connectivity;
+                          meaningful implementation of the SDN functionality
+                          required by the project.
+Socket–SDN           3    Effective interaction between the socket application and
+Integration               SDN network; application/network events influence SDN
+                          behavior where required; end-to-end integration is
+                          demonstrated.
+Initial Testing &    2    Basic end-to-end system works; appropriate test cases are
+Demo                      demonstrated; communication between application
+                          components and the SDN-controlled network is verified.
+Complete             4    All major project requirements are implemented; application
+Application               supports expected users/clients/flows; functionality works
+Functionality             correctly under normal operating conditions.
+Dynamic SDN          6    SDN controller dynamically responds to network/application
+Functionality             conditions through mechanisms such as routing, filtering,
+                          prioritization, load balancing, rerouting, monitoring,
+                          blocking, or recovery.
+Challenging          4    At least one meaningful challenging scenario is
+Scenario /                demonstrated, such as congestion, packet loss, link failure,
+Robustness                server overload, unauthorized access, or service failure;
+                          system responds appropriately.
+Performance          5    Appropriate metrics are measured; experiments are
+Evaluation &              conducted under multiple conditions; results are presented
+Comparison                clearly; proposed approach is compared with a suitable
+                          baseline/static approach.
+Documentation,       6    Complete and well-structured documentation; architecture,
+Final Demo & Viva         implementation, testing and results are clearly presented;
+                          reproducible final demonstration; students demonstrate
+                          individual understanding through viva.
+

@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# virtualenvs
+.venv/
+envs/
+legacy/
+
+# runtime data / artifacts
+logs/
+*.log
+*.part
+*.db
+*.sqlite3
+server/storage/*.bin
+client/downloads/*.bin
+results/raw/*
+!results/raw/.gitkeep
+
+# secrets / local config
+.env
