@@ -108,15 +108,6 @@ CN PROJECT/
 │   ├── protocol.py               framed TCP protocol + helpers + error codes
 │   └── config.py                 addresses, ports, limits
 │
-├── scripts/                      ── run / verify ──────────────────────────
-│   ├── start_controller.sh       launch Ryu from envs/ryu
-│   ├── start_services.sh         run server + client Flask apps locally (no Mininet)
-│   ├── cleanup.sh                kill strays + `sudo mn -c`
-│   ├── probe.py                  one-shot in-namespace connectivity probe
-│   └── verify_sdn_gate.py        end-to-end SDN gate test (unauth→grant→revoke)
-│
-├── tests/                        unit/ integration/ scenarios/  (placeholders)
-├── results/                      raw/ figures/  (experiment output)
 ├── envs/ryu/                     Ryu Python 3.8 virtualenv (not committed)
 ├── docs/                         current-state.md, plan.md + course material
 └── legacy/                       archived earlier prototypes (not committed)
@@ -247,13 +238,30 @@ returns a `Grant` with a unique cookie), `revoke()`, `is_allowed()`, `state()`. 
 
 Invalid input returns HTTP 400.
 
-### 4.12 `scripts/`
+### 4.12 Running the project
 
-- `start_controller.sh` — runs `envs/ryu/bin/ryu-manager` with the app (OFP 6653, REST 8080).
-- `start_services.sh` — runs the server + one client Flask app locally (no Mininet).
-- `cleanup.sh` — kills stray controller/app processes and runs `sudo mn -c`.
-- `probe.py` — runs inside a Mininet host; prints `OK ...` or `BLOCKED ...` after a LIST probe.
-- `verify_sdn_gate.py` — the end-to-end SDN gate test (§9).
+There are no wrapper scripts — three commands, one per terminal:
+
+```bash
+# terminal 1 — SDN controller (OFP 6653, REST 8080)
+envs/ryu/bin/ryu-manager --ofp-tcp-listen-port 6653 \
+  --wsapi-host 127.0.0.1 --wsapi-port 8080 SDN/controller/ryu_app.py
+
+# terminal 2 — topology (needs root); starts the server + client apps
+sudo env SDN_CONTROLLER_IP=127.0.0.1 MN_CLIENTS=client1,client2 \
+  MN_MGMT=1 MN_HOLD=1 python3 SDN/topology.py
+
+# terminal 3 — tear down
+sudo pkill -f '[t]opology.py' && sudo mn -c
+```
+
+To check the gate by hand, grant a client and watch its traffic succeed:
+
+```bash
+curl -X POST localhost:8080/policy/grant -H 'Content-Type: application/json' \
+  -d '{"src_ip":"10.0.0.11","dst_ip":"10.0.0.1","dport":9000}'
+curl -s localhost:8080/policy/stats
+```
 
 ---
 
@@ -346,19 +354,25 @@ envs/ryu/bin/python -m pip install --no-build-isolation eventlet==0.30.2 greenle
 
 ```bash
 # terminal 1 — controller
-./scripts/start_controller.sh
+envs/ryu/bin/ryu-manager --ofp-tcp-listen-port 6653 \
+  --wsapi-host 127.0.0.1 --wsapi-port 8080 SDN/controller/ryu_app.py
 
 # terminal 2 — topology with SDN (needs root)
 sudo env SDN_CONTROLLER_IP=127.0.0.1 PATH="$PATH" python3 SDN/topology.py
 
 # clean up
-./scripts/cleanup.sh
+sudo pkill -f '[t]opology.py'; sudo mn -c
 ```
 
 ### Verify the SDN gate
 
+Grant a client, then confirm the flows and counters change:
+
 ```bash
-sudo env PYTHONPATH=. python3 scripts/verify_sdn_gate.py
+curl -X POST localhost:8080/policy/grant -H 'Content-Type: application/json' \
+  -d '{"src_ip":"10.0.0.11","dst_ip":"10.0.0.1","dport":9000}'
+sudo ovs-ofctl -O OpenFlow13 dump-flows s1 | grep priority=200
+curl -s localhost:8080/policy/stats
 ```
 
 Observed result (this stage):
@@ -377,7 +391,7 @@ switch (12/12 received).
 ## 10. Troubleshooting
 
 - **`sudo` needed** for `mn`, `ovs-*` and topology runs.
-- **Clean state between runs:** `./scripts/cleanup.sh` (runs `sudo mn -c`).
+- **Clean state between runs:** `sudo pkill -f '[t]opology.py'; sudo mn -c`.
 - **Ryu won't install:** see the `setuptools<58` / `eventlet==0.30.2` notes in §9.
 - **Switch not connecting:** ensure the controller is running first and
   `SDN_CONTROLLER_IP=127.0.0.1` is exported into the sudo environment.

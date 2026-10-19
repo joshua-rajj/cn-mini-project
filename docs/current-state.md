@@ -154,9 +154,6 @@ server/     tcp_server.py, app.py, templates/, storage/     (moved from basic_fi
 client/     app.py, templates/, downloads/                  (moved from basic_file_sharing/client)
 SDN/        topology.py, controller/{ryu_app,policy,rest}.py
 common/     protocol.py (framed TCP protocol), config.py
-scripts/    start_controller.sh, start_services.sh, cleanup.sh
-tests/      unit/, integration/, scenarios/   (empty placeholder)
-results/    raw/, figures/
 legacy/     old_raw_socket_app/, src/, pyproject.toml, uv.lock, .python-version, basic_file_sharing-requirements.txt
 ```
 
@@ -171,7 +168,7 @@ legacy/     old_raw_socket_app/, src/, pyproject.toml, uv.lock, .python-version,
 - New `SDN/controller/{ryu_app,policy,rest}.py`: Ryu L2-learning + policy switch with a
   REST control plane (grant/revoke/state/stats/flows).
 - New `README.md`, `requirements.txt`, `requirements-controller.txt`, `.gitignore`,
-  `.env.example`, `scripts/*.sh`.
+  `.env.example`.
 
 **Evidence — worked (no root needed)**
 
@@ -199,7 +196,7 @@ legacy/     old_raw_socket_app/, src/, pyproject.toml, uv.lock, .python-version,
 | `ovs-ofctl dump-flows s1` after up | priority=10 learned L2 flows + `priority=0 actions=CONTROLLER:65535` table-miss |
 | Server + 3 client Flask apps started inside hosts | dashboards logged at 10.0.0.1:5000, 10.0.0.11-13:5001 |
 
-**Verified — SDN gate (Socket<->SDN integration), `scripts/verify_sdn_gate.py`**
+**Verified — SDN gate (Socket<->SDN integration), manual grant/revoke**
 
 | Stage | Probe from client1 (10.0.0.11) to server:9000 | Controller |
 | --- | --- | --- |

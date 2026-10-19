@@ -16,8 +16,6 @@ logs/
 *.sqlite3
 server/storage/*.bin
 client/downloads/*.bin
-results/raw/*
-!results/raw/.gitkeep
 
 # secrets / local config
 .env

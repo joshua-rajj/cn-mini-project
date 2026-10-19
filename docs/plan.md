@@ -158,9 +158,6 @@ CN PROJECT/
 │   │   └── rest.py         REST control plane (grant/revoke/state/stats/flows)
 │   └── topology.py         Mininet topology (optional RemoteController -> Ryu)
 ├── common/         protocol.py (framed TCP protocol), config.py
-├── scripts/        start_controller.sh, start_services.sh, cleanup.sh
-├── tests/          unit/ integration/ scenarios/
-├── results/        raw/ figures/
 ├── docs/           current-state.md, plan.md, + original course material
 ├── envs/ryu/       Ryu Python 3.8 virtualenv (not committed)
 ├── legacy/         archived earlier prototypes (not used)
@@ -190,7 +187,7 @@ Exit: codebase understood and baseline reproducible (pending sudo verification).
 - [x] L2 learning + table-miss in `SDN/controller/ryu_app.py`.
 - [x] Protected endpoint (TCP dport 9000) gated by policy.
 - [x] REST control plane (`grant/revoke/state/stats/flows`).
-- [x] Verified with `scripts/verify_sdn_gate.py`: unauthorized BLOCKED, granted OK, revoked BLOCKED; flow dumps captured.
+- [x] Verified manually: unauthorized BLOCKED, granted OK, revoked BLOCKED; flow dumps captured.
 - **Exit:** pingall works through the Ryu-controlled switch and policy changes forwarding behaviour. ✅
 
 ### Phase 3 — TCP transfer core

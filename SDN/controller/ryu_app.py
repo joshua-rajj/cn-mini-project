@@ -46,7 +46,9 @@ TRANSFER_PORT = int(os.environ.get("TRANSFER_PORT", "9000"))
 
 PRIORITY_TABLE_MISS = 0
 PRIORITY_LEARNED = 10
-PRIORITY_ALLOW = 200        # beats learning, grants the protected flow
+PRIORITY_PROTECTED = 100     # protected traffic always goes to the controller,
+                             # so priority-10 learned flows can never bypass policy
+PRIORITY_ALLOW = 200         # beats everything; grants the protected flow
 
 ETH_TYPE_IP = 0x0800
 
@@ -80,6 +82,7 @@ class PolicySwitch(app_manager.RyuApp):
     def _features(self, ev):
         dp = ev.msg.datapath
         self._install_table_miss(dp)
+        self._install_protected_rule(dp)
 
     def _install_table_miss(self, dp):
         ofproto, parser = dp.ofproto, dp.ofproto_parser
@@ -88,6 +91,21 @@ class PolicySwitch(app_manager.RyuApp):
                                           ofproto.OFPCML_NO_BUFFER)]
         self._add_flow(dp, PRIORITY_TABLE_MISS, match, actions)
         self.logger.info("switch %s: table-miss installed", dp.id)
+
+    def _install_protected_rule(self, dp):
+        """Send all client->server:9000 traffic to the controller.
+
+        Priority 100 beats the priority-10 learned flows, so MAC learning cannot
+        accidentally forward protected traffic past the policy check.
+        """
+        ofproto, parser = dp.ofproto, dp.ofproto_parser
+        match = parser.OFPMatch(eth_type=ETH_TYPE_IP, ip_proto=6,
+                                ipv4_dst=SERVER_IP, tcp_dst=TRANSFER_PORT)
+        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
+                                          ofproto.OFPCML_NO_BUFFER)]
+        self._add_flow(dp, PRIORITY_PROTECTED, match, actions)
+        self.logger.info("switch %s: protected rule (tcp dport %s) installed",
+                         dp.id, TRANSFER_PORT)
 
     def _add_flow(self, dp, priority, match, actions, cookie=0,
                   idle_timeout=0, hard_timeout=0):
@@ -119,16 +137,18 @@ class PolicySwitch(app_manager.RyuApp):
         # Protected service: client -> server:9000/tcp.
         if (ip is not None and tcph is not None
                 and ip.dst == SERVER_IP and tcph.dst_port == TRANSFER_PORT):
-            self._handle_protected(dp, msg, ip, tcph, in_port)
+            self._handle_protected(dp, msg, eth, ip, tcph, in_port)
             return
 
         self._learn_and_forward(dp, msg, eth, in_port)
 
-    def _handle_protected(self, dp, msg, ip, tcph, in_port):
+    def _handle_protected(self, dp, msg, eth, ip, tcph, in_port):
         if self.policy.is_allowed(ip.src, ip.dst, tcph.dst_port):
             self.counters["allowed"] += 1
             self.logger.info("ALLOW %s -> %s:%s", ip.src, ip.dst, tcph.dst_port)
-            self._forward(dp, msg, in_port)
+            out_port = self.mac_to_port.get(dp.id, {}).get(eth.dst, dp.ofproto.OFPP_FLOOD)
+            self._forward(dp, msg, in_port,
+                          [dp.ofproto_parser.OFPActionOutput(out_port)])
         else:
             self.counters["denied"] += 1
             self.logger.warning("DENY  %s -> %s:%s (no grant)",
@@ -149,7 +169,7 @@ class PolicySwitch(app_manager.RyuApp):
     def _forward(self, dp, msg, in_port, actions=None):
         ofproto, parser = dp.ofproto, dp.ofproto_parser
         if actions is None:
-            actions = [parser.OFPActionOutput(ofproto.OFPP_TABLE)]
+            actions = [parser.OFPActionOutput(ofproto.OFPP_FLOOD)]
         if msg.buffer_id != ofproto.OFP_NO_BUFFER:
             dp.send_msg(parser.OFPPacketOut(
                 dp, buffer_id=msg.buffer_id, in_port=in_port, actions=actions))
