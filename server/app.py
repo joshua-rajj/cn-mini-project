@@ -13,9 +13,8 @@ import urllib.request
 
 from flask import Flask, jsonify, render_template, request
 
-from tcp_server import active_clients, serve
+from tcp_server import SERVER_PASSWORD as PASSWORD, active_clients, serve
 
-PASSWORD = os.environ.get("SERVER_PASSWORD", "project14")
 CONTROLLER = os.environ.get("CONTROLLER_URL", "http://10.0.0.254:8080")
 
 app = Flask(__name__)

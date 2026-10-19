@@ -1,12 +1,13 @@
 """Client dashboard on port 5001.
 
-The client logs in with the server's password, then it can upload and
-download files over the TCP connection to the server.
+The browser login checks the password with the server and asks the SDN
+controller to allow this client's IP. After that, uploads and downloads use
+the Client class from client.py (the teammate code, framed protocol).
 """
 
 import json
 import os
-import socket
+import tempfile
 import threading
 import time
 import urllib.request
@@ -14,7 +15,9 @@ from urllib.error import HTTPError
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, send_file
 
-SERVER_HOST = os.environ.get("FILE_SERVER_HOST", "127.0.0.1")
+from client import Client, ClientError
+
+SERVER_HOST = os.environ.get("FILE_SERVER_HOST", "10.0.0.1")
 SERVER_PORT = int(os.environ.get("FILE_SERVER_PORT", "9000"))
 CLIENT_NAME = os.environ.get("CLIENT_NAME", "client")
 CLIENT_ID = os.environ.get("CLIENT_ID", "client1")
@@ -24,6 +27,7 @@ DOWNLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 
 app = Flask(__name__)
 logged_in = False
+session_password = None
 
 
 def page(error=None):
@@ -31,44 +35,6 @@ def page(error=None):
                            client_id=CLIENT_ID, server_host=SERVER_HOST,
                            server_port=SERVER_PORT, logged_in=logged_in,
                            error=error)
-
-
-def read_line(sock):
-    """Read one line of JSON from the socket."""
-    line = b""
-    while not line.endswith(b"\n"):
-        byte = sock.recv(1)
-        if not byte:
-            raise ConnectionError("no reply from server")
-        line += byte
-    return json.loads(line.decode())
-
-
-def request_server(request, timeout=10, save_as=None):
-    """Send one JSON request to the file server.
-
-    If save_as is given, the file bytes that follow the reply are saved there.
-    """
-    sock = socket.create_connection((SERVER_HOST, SERVER_PORT), timeout=timeout)
-    sock.settimeout(timeout)
-    try:
-        sock.sendall((json.dumps(request) + "\n").encode())
-        reply = read_line(sock)
-
-        if save_as is None or not reply.get("ok"):
-            return reply
-
-        remaining = reply["size"]
-        with open(save_as, "wb") as file:
-            while remaining > 0:
-                chunk = sock.recv(min(65536, remaining))
-                if not chunk:
-                    raise ConnectionError("download interrupted")
-                file.write(chunk)
-                remaining -= len(chunk)
-        return reply
-    finally:
-        sock.close()
 
 
 def post_to_server(path, data):
@@ -86,12 +52,17 @@ def post_to_server(path, data):
 
 
 def send_heartbeat():
+    """Log in over TCP every 5 seconds so the server lists us as online."""
     while True:
-        try:
-            request_server({"command": "HEARTBEAT", "client_id": CLIENT_ID,
-                            "name": CLIENT_NAME}, timeout=4)
-        except OSError:
-            pass
+        if logged_in and session_password:
+            client = Client(SERVER_HOST, SERVER_PORT)
+            try:
+                client.connect()
+                client.login(CLIENT_NAME, session_password)
+            except (OSError, ClientError):
+                pass
+            finally:
+                client.close()
         time.sleep(5)
 
 
@@ -102,7 +73,7 @@ def dashboard():
 
 @app.route("/login", methods=["POST"])
 def login():
-    global logged_in
+    global logged_in, session_password
     password = request.form.get("password", "")
 
     try:
@@ -114,17 +85,19 @@ def login():
         return page("Wrong password."), 401
 
     logged_in = True
+    session_password = password
     return redirect("/")
 
 
 @app.route("/logout", methods=["POST"])
 def logout():
-    global logged_in
+    global logged_in, session_password
     try:
         post_to_server("/api/logout", {})
     except OSError:
         pass
     logged_in = False
+    session_password = None
     return redirect("/")
 
 
@@ -133,12 +106,17 @@ def api_files():
     if not logged_in:
         return jsonify({"ok": False, "error": "not logged in", "files": []}), 401
 
+    client = Client(SERVER_HOST, SERVER_PORT)
     try:
-        reply = request_server({"command": "LIST", "client_id": CLIENT_ID,
-                                "name": CLIENT_NAME})
-        return jsonify(reply)
-    except (OSError, ValueError) as error:
+        client.connect()
+        client.login(CLIENT_NAME, session_password)
+        files = client.list_files()
+    except (OSError, ClientError) as error:
         return jsonify({"ok": False, "error": str(error), "files": []}), 502
+    finally:
+        client.close()
+
+    return jsonify({"ok": True, "files": files})
 
 
 @app.route("/download/<name>")
@@ -146,15 +124,22 @@ def download(name):
     if not logged_in:
         abort(401)
 
+    if os.path.basename(name) != name or name in ("", ".", ".."):
+        abort(400)
+
+    os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
     destination = os.path.join(DOWNLOAD_FOLDER, name)
+
+    client = Client(SERVER_HOST, SERVER_PORT)
     try:
-        reply = request_server({"command": "DOWNLOAD", "client_id": CLIENT_ID,
-                                "name": CLIENT_NAME, "filename": name},
-                               timeout=60, save_as=destination)
-    except (OSError, ValueError) as error:
+        client.connect()
+        client.login(CLIENT_NAME, session_password)
+        client.download(name, dest=destination)
+    except (OSError, ClientError) as error:
         return "Download failed: %s" % error, 502
-    if not reply.get("ok"):
-        abort(404)
+    finally:
+        client.close()
+
     return send_file(destination, as_attachment=True, download_name=name)
 
 
@@ -171,31 +156,24 @@ def upload():
     if name != uploaded.filename or name in ("", ".", ".."):
         return page("That filename is not allowed."), 400
 
-    # Find out how many bytes we are sending before we send them.
-    stream = uploaded.stream
-    stream.seek(0, os.SEEK_END)
-    size = stream.tell()
-    stream.seek(0)
+    os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
+    temporary = tempfile.NamedTemporaryFile(delete=False, dir=DOWNLOAD_FOLDER,
+                                            suffix=".part")
+    temporary.close()
+    uploaded.save(temporary.name)
 
-    sock = socket.create_connection((SERVER_HOST, SERVER_PORT), timeout=60)
-    sock.settimeout(60)
+    client = Client(SERVER_HOST, SERVER_PORT)
     try:
-        header = {"command": "UPLOAD", "client_id": CLIENT_ID,
-                  "name": CLIENT_NAME, "filename": name, "size": size}
-        sock.sendall((json.dumps(header) + "\n").encode())
-        while True:
-            chunk = stream.read(65536)
-            if not chunk:
-                break
-            sock.sendall(chunk)
-        reply = read_line(sock)
-    except (OSError, ValueError) as error:
+        client.connect()
+        client.login(CLIENT_NAME, session_password)
+        client.upload(temporary.name, name=name)
+    except (OSError, ClientError) as error:
         return page("Upload failed: %s" % error), 502
     finally:
-        sock.close()
+        client.close()
+        if os.path.exists(temporary.name):
+            os.remove(temporary.name)
 
-    if not reply.get("ok"):
-        return page("Upload failed: %s" % reply.get("error")), 500
     return redirect("/")
 
 

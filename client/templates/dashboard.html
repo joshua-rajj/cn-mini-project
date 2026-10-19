@@ -73,8 +73,8 @@
 
           list.innerHTML = data.files.map(function (file) {
             return '<li>' +
-              '<a href="/download/' + encodeURIComponent(file.name) + '">' + file.name + '</a>' +
-              ' <span class="size">(' + file.size + ' bytes, ' + file.modified + ')</span>' +
+              '<a href="/download/' + encodeURIComponent(file.filename) + '">' + file.filename + '</a>' +
+              ' <span class="size">(' + file.size + ' bytes, ' + file.owner + ', ' + file.upload_time + ')</span>' +
               '</li>';
           }).join('');
         } catch (error) {
