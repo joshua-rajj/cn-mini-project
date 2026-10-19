@@ -1,15 +1,5 @@
-# Ryu SDN controller.
-#
-# Ryu is unmaintained for Python 3.10+, so it lives in its own Python 3.8
-# virtualenv (envs/ryu), separate from Mininet (system Python) and the
-# application (project .venv).
-#
-# IMPORTANT: `uv pip install ryu` fails -- Ryu's PBR metadata is inconsistent
-# ("0.0.0" vs "4.34") and uv refuses it. Use pip, and build without isolation
-# against setuptools<58 (modern setuptools removed the easy_install API Ryu's
-# setup.py calls). See the exact recipe in README.md.
+# Ryu only works on Python 3.8, so it lives in its own virtualenv (envs/ryu).
+# See the README for the install steps.
 ryu==4.34
-
-# Ryu 4.34 imports eventlet.wsgi.ALREADY_HANDLED, removed in eventlet>=0.31.
 eventlet==0.30.2
 greenlet==1.1.3

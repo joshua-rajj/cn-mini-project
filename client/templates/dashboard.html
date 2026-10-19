@@ -1,10 +1,55 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Client Dashboard</title>
-<style>
-:root{color-scheme:dark;--bg:#0b1110;--line:#263831;--text:#e9f4ef;--muted:#9ab0a5;--accent:#3df2a6}*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#172b23,var(--bg) 55%);font:15px/1.5 system-ui;color:var(--text)}main{max-width:1000px;margin:auto;padding:44px 22px}.eyebrow{color:var(--accent);font-size:12px;letter-spacing:.15em;text-transform:uppercase;font-weight:700}h1{font-size:clamp(30px,5vw,44px);margin:10px 0}p{color:var(--muted)}.panel{margin-top:28px;background:#121c19ef;border:1px solid var(--line);border-radius:18px;padding:22px}.top{display:flex;justify-content:space-between;align-items:center;gap:20px;flex-wrap:wrap}.pill{border:1px solid #285c46;background:#153526;color:var(--accent);border-radius:99px;padding:5px 10px;font-size:12px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(235px,1fr));gap:13px;margin-top:20px}.file{border:1px solid var(--line);background:#0e1714;border-radius:14px;padding:17px;display:flex;gap:13px;align-items:center;min-width:0}.icon{width:44px;height:48px;border-radius:10px;background:#183629;color:var(--accent);display:grid;place-items:center;font-size:21px;flex-shrink:0}.info{min-width:0;flex:1}.name{font-weight:650;overflow-wrap:anywhere}.meta{font-size:12px;color:var(--muted);margin-top:3px}a.download{display:inline-block;color:#08130e;background:var(--accent);font-weight:750;text-decoration:none;padding:8px 11px;border-radius:8px;font-size:12px;margin-top:10px}.empty{padding:40px 10px;text-align:center;color:var(--muted);grid-column:1/-1}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent);margin-right:8px}@media(max-width:600px){main{padding:25px 14px}.panel{padding:14px}}
-</style></head><body><main><div class="eyebrow">Socket File Sharing · Client</div><h1>Shared files</h1><p>Client <strong>{{ client_name }}</strong> · ID <code>{{ client_id }}</code></p><section class="panel"><div class="top"><div><strong>Files on server</strong><div style="color:var(--muted);font-size:13px">Server {{ server_host }}:{{ server_port }}</div></div><span class="pill"><span class="dot"></span><span id="connection">Connecting…</span></span></div><div class="grid" id="files"><div class="empty">Loading files…</div></div><p id="status"></p></section></main>
-<script>
-function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function size(n){if(n<1024)return n+' B';if(n<1048576)return(n/1024).toFixed(1)+' KB';if(n<1073741824)return(n/1048576).toFixed(1)+' MB';return(n/1073741824).toFixed(2)+' GB'}
-async function refresh(){const grid=document.getElementById('files');try{const r=await fetch('/api/files',{cache:'no-store'}),d=await r.json();if(!r.ok||!d.ok)throw Error(d.error||'Server unavailable');document.getElementById('connection').textContent='Connected';document.getElementById('status').textContent='Updated just now';grid.innerHTML=d.files.length?d.files.map(f=>`<article class="file"><div class="icon">▤</div><div class="info"><div class="name">${esc(f.name)}</div><div class="meta">${size(f.size)} · ${esc(f.modified)}</div><a class="download" href="/download/${encodeURIComponent(f.name)}">Download ↓</a></div></article>`).join(''):'<div class="empty">No files available. Add files to the server shared folder.</div>'}catch(e){document.getElementById('connection').textContent='Disconnected';document.getElementById('status').textContent='Could not reach server: '+e.message;grid.innerHTML='<div class="empty">Server unavailable. Check the server and refresh.</div>'}}refresh();setInterval(refresh,10000)
-</script></body></html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Client Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; background: #f4f4f4; color: #222; }
+    h1 { margin-bottom: 4px; }
+    .sub { color: #666; margin-top: 0; }
+    ul { background: white; padding: 20px 20px 20px 40px; }
+    li { padding: 8px 0; border-bottom: 1px solid #eee; }
+    a { color: #0a5; }
+    .size { color: #777; font-size: 13px; }
+    .error { color: #b00; }
+  </style>
+</head>
+<body>
+  <h1>Client Dashboard</h1>
+  <p class="sub">{{ client_name }} ({{ client_id }}) &middot; server {{ server_host }}:{{ server_port }}</p>
+
+  <h2>Files on the server</h2>
+  <ul id="files"><li>Loading...</li></ul>
+
+  <script>
+    async function refresh() {
+      const list = document.getElementById('files');
+      try {
+        const response = await fetch('/api/files');
+        const data = await response.json();
+        if (!data.ok) {
+          throw new Error(data.error);
+        }
+
+        if (data.files.length === 0) {
+          list.innerHTML = '<li>No files on the server.</li>';
+          return;
+        }
+
+        list.innerHTML = data.files.map(function (file) {
+          return '<li>' +
+            '<a href="/download/' + encodeURIComponent(file.name) + '">' + file.name + '</a>' +
+            ' <span class="size">(' + file.size + ' bytes, ' + file.modified + ')</span>' +
+            '</li>';
+        }).join('');
+      } catch (error) {
+        list.innerHTML = '<li class="error">Could not reach the server: ' +
+          error.message + '</li>';
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 10000);
+  </script>
+</body>
+</html>
