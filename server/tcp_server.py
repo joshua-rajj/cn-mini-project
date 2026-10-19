@@ -1,7 +1,7 @@
 """File server: a small TCP server that clients talk to on port 9000.
 
-Every request is one line of JSON. For a download the server replies with a
-JSON header (name and size) and then sends the raw file bytes.
+Every request is one line of JSON. Downloads and uploads are followed by raw
+file bytes.
 
 This runs in a background thread started by app.py.
 """
@@ -15,7 +15,8 @@ import time
 PORT = 9000
 FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "storage")
 CHUNK = 64 * 1024
-CLIENT_TIMEOUT = 30   # a client is "active" for this many seconds
+MAX_SIZE = 200 * 1024 * 1024      # 200 MB
+CLIENT_TIMEOUT = 30               # a client is "active" for this many seconds
 
 clients = {}          # client id -> details, shared by all threads
 clients_lock = threading.Lock()
@@ -30,6 +31,16 @@ def read_json(reader):
     if not line:
         raise ConnectionError("client disconnected")
     return json.loads(line.decode())
+
+
+def safe_name(filename):
+    """Return a plain filename, or None if it tries to use a path."""
+    if not filename:
+        return None
+    name = os.path.basename(filename)
+    if name != filename or name in ("", ".", ".."):
+        return None
+    return name
 
 
 def list_files():
@@ -77,39 +88,52 @@ def active_clients():
     return result
 
 
-def find_file(filename):
-    """Return a path inside the storage folder, or None if it is not safe."""
-    if not filename or "/" in filename or "\\" in filename or filename == "..":
-        return None
-    path = os.path.join(FOLDER, filename)
-    if os.path.isfile(path):
-        return path
-    return None
+def receive_file(reader, path, size):
+    """Read exactly `size` bytes from the client into `path`."""
+    part = path + ".part"
+    try:
+        with open(part, "wb") as file:
+            remaining = size
+            while remaining > 0:
+                chunk = reader.read(min(CHUNK, remaining))
+                if not chunk:
+                    raise ConnectionError("upload interrupted")
+                file.write(chunk)
+                remaining -= len(chunk)
+        os.replace(part, path)      # only publish the file once it is complete
+    except OSError:
+        if os.path.exists(part):
+            os.remove(part)
+        raise
 
 
 def handle_client(conn, addr):
     ip = addr[0]
     try:
-        conn.settimeout(15)
+        conn.settimeout(60)
         reader = conn.makefile("rb")
         request = read_json(reader)
         command = request.get("command")
 
-        if command in ("REGISTER", "HEARTBEAT", "LIST", "DOWNLOAD"):
+        if command in ("REGISTER", "HEARTBEAT", "LIST", "DOWNLOAD", "UPLOAD"):
             remember_client(request, ip)
 
         if command in ("REGISTER", "HEARTBEAT"):
             send_json(conn, {"ok": True})
+
         elif command == "LIST":
             send_json(conn, {"ok": True, "files": list_files()})
+
         elif command == "CLIENTS":
             send_json(conn, {"ok": True, "clients": active_clients()})
+
         elif command == "DOWNLOAD":
-            path = find_file(request.get("filename"))
-            if path is None:
+            name = safe_name(request.get("filename"))
+            path = os.path.join(FOLDER, name) if name else None
+            if path is None or not os.path.isfile(path):
                 send_json(conn, {"ok": False, "error": "file not found"})
             else:
-                send_json(conn, {"ok": True, "filename": os.path.basename(path),
+                send_json(conn, {"ok": True, "filename": name,
                                  "size": os.path.getsize(path)})
                 with open(path, "rb") as file:
                     while True:
@@ -117,6 +141,18 @@ def handle_client(conn, addr):
                         if not chunk:
                             break
                         conn.sendall(chunk)
+
+        elif command == "UPLOAD":
+            name = safe_name(request.get("filename"))
+            size = int(request.get("size", 0))
+            if name is None:
+                send_json(conn, {"ok": False, "error": "bad filename"})
+            elif size <= 0 or size > MAX_SIZE:
+                send_json(conn, {"ok": False, "error": "bad size"})
+            else:
+                receive_file(reader, os.path.join(FOLDER, name), size)
+                send_json(conn, {"ok": True, "filename": name, "size": size})
+
         else:
             send_json(conn, {"ok": False, "error": "unknown command"})
     except (OSError, ValueError) as error:
@@ -135,7 +171,7 @@ def serve():
 
     while True:
         conn, addr = server.accept()
-        # One thread per client, so many downloads can run at once.
+        # One thread per client, so many transfers can run at once.
         threading.Thread(target=handle_client, args=(conn, addr),
                          daemon=True).start()
 

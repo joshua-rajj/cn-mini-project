@@ -7,11 +7,16 @@ It does two things:
    client has logged in. Logging in adds the client's IP to `allowed` and
    installs an OpenFlow rule for it. Logging out removes it again.
 
-The Flask server controls this over a small HTTP API on 127.0.0.1:8080:
+The Flask server controls this over a small HTTP API on port 8080:
 
     POST /grant   {"ip": "10.0.0.11"}
     POST /revoke  {"ip": "10.0.0.11"}
     GET  /state
+
+The controller runs in the root namespace, but the Flask server runs inside
+the `server` host, which has its own loopback. So the API listens on all
+interfaces and the server calls it at http://10.0.0.254:8080 (the management
+interface added by topology.py).
 
 Run with:
     envs/ryu/bin/ryu-manager SDN/controller.py
@@ -137,9 +142,9 @@ class Firewall(app_manager.RyuApp):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        server = ThreadingHTTPServer(("127.0.0.1", REST_PORT), ControlHandler)
+        server = ThreadingHTTPServer(("0.0.0.0", REST_PORT), ControlHandler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
-        log("control API on 127.0.0.1:%d" % REST_PORT)
+        log("control API on port %d" % REST_PORT)
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_connected(self, ev):

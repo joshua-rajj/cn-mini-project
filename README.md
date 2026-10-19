@@ -10,8 +10,8 @@ who is allowed to reach that port.
   per client, so several clients can download at the same time.
 - `server/app.py` is the server dashboard (port 5000) and also starts the TCP
   server in a background thread.
-- `client/app.py` is the client dashboard (port 5001). It sends a heartbeat
-  every 5 seconds and downloads files through the TCP socket.
+- `client/app.py` is the client dashboard (port 5001). It has a login form,
+  sends a heartbeat every 5 seconds, and can upload and download files.
 - `SDN/controller.py` is the Ryu controller. It works as a learning switch and
   also blocks traffic going to `10.0.0.1:9000` unless the client has logged in.
 - `SDN/topology.py` builds the Mininet network and starts the apps inside each
@@ -19,19 +19,31 @@ who is allowed to reach that port.
 
 ### Login and the SDN rules
 
-The controller starts by sending all traffic for `10.0.0.1:9000` to itself.
-If the client is not logged in, the packet is dropped. When the client logs in,
-the controller adds an OpenFlow rule that lets that client's IP through:
+The server has one shared password, set in `server/app.py` (or with the
+`SERVER_PASSWORD` environment variable). The default is `project14`.
+
+The login form is on the client dashboard. When you submit the password:
+
+1. The client app forwards it to the server (`POST /api/login`).
+2. The server checks the password. If it is right, it tells the Ryu controller
+   to grant the client's IP address.
+3. The controller installs an OpenFlow rule for that IP:
 
 ```
 priority 200  tcp, src=10.0.0.11, dst=10.0.0.1, dport=9000  -> NORMAL
 priority 200  tcp, src=10.0.0.1, dst=10.0.0.11, sport=9000  -> NORMAL
 ```
 
-Logging out deletes those rules, so the client is blocked again.
+Now that client's uploads, downloads and heartbeats are allowed.
 
-The Flask server controls the controller with a small HTTP API on
-`127.0.0.1:8080`:
+Logging out tells the controller to delete those rules, so the client is
+blocked again.
+
+The Ryu controller runs in the root namespace, but the Flask server runs inside
+the `server` host, which has its own loopback. That is why the controller's
+control API listens on all interfaces and the server calls it at
+`http://10.0.0.254:8080` (the management interface from `topology.py`). You can
+also call it by hand from the real machine:
 
 ```bash
 curl -X POST localhost:8080/grant  -d '{"ip":"10.0.0.11"}'
@@ -106,26 +118,26 @@ Dashboards:
 The topology adds a management interface (`10.0.0.254`) in the real machine,
 so the browser can reach those `10.0.0.x` addresses.
 
-## Trying the login gate
+## Using the dashboards
 
-With the network running, a client cannot list or download files yet, because
-all traffic to port 9000 is blocked. Allow it from the controller:
+1. Open a client dashboard, for example <http://10.0.0.11:5001>.
+2. Log in with the server password (`project14` by default). You can change it
+   by starting the server with `SERVER_PASSWORD=mypass`.
+3. After logging in you can upload a file and download any file from the list.
+4. Click **Log out** to revoke access. The files list will stop working because
+   the controller blocks port 9000 again.
 
-```bash
-curl -X POST localhost:8080/grant -d '{"ip":"10.0.0.11"}'
-```
-
-Reload the client dashboard and the files appear. To block it again:
-
-```bash
-curl -X POST localhost:8080/revoke -d '{"ip":"10.0.0.11"}'
-```
+The server dashboard at <http://10.0.0.1:5000> shows which clients are online
+(a client is online while its heartbeat is getting through, which means it is
+logged in).
 
 `curl localhost:8080/state` shows which IPs are allowed and how many packets
 were blocked.
 
-## Not done yet
+## Notes
 
-The dashboards do not have a login form, so the grant/revoke calls are made by
-hand with `curl` for now. Uploads are also not implemented yet - clients can
-only download files that are placed in `server/storage/`.
+- Uploads are written to a `.part` file first and renamed when complete, so a
+  half-finished upload never appears in the file list.
+- The control API on port 8080 is reachable from inside the Mininet network.
+  That is fine for a class project, but in a real system it should be locked
+  down.
