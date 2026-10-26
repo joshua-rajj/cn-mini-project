@@ -1,10 +1,3 @@
-"""CNDF client: transfers files to/from the server using protocol.py.
-
-This is the teammate client.py, kept close to the original: the Client class
-handles one connection (login + upload/download/list), and the command line
-below can run several transfers in parallel with -j.
-"""
-
 import argparse
 import hashlib
 import json
@@ -14,21 +7,21 @@ import sys
 import threading
 import time
 
-# protocol.py lives in the project root, one level above this file.
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from protocol import CHUNK_SIZE, recv_frame, send_frame, sha256_file
 
 DEFAULT_HOST = "10.0.0.1"
 DEFAULT_PORT = 9000
-CONNECT_TIMEOUT = 10.0
-READ_TIMEOUT = 30.0
 
 
 class ClientError(Exception):
     def __init__(self, code, message=""):
-        super().__init__(f"{code}: {message}" if message else code)
         self.code = code
         self.message = message
+        if message:
+            super().__init__(code + ": " + message)
+        else:
+            super().__init__(code)
 
 
 class Client:
@@ -38,18 +31,16 @@ class Client:
         self.sock = None
         self.token = None
         self.username = None
-        self._secret = None
+        self.secret = None
         self.stats = []
 
     def connect(self):
-        self.sock = socket.create_connection(
-            (self.host, self.port), timeout=CONNECT_TIMEOUT
-        )
-        self.sock.settimeout(READ_TIMEOUT)
+        self.sock = socket.create_connection((self.host, self.port), timeout=10)
+        self.sock.settimeout(30)
         return self
 
     def close(self):
-        if self.sock is not None:
+        if self.sock:
             try:
                 self.sock.close()
             except OSError:
@@ -60,278 +51,273 @@ class Client:
     def __enter__(self):
         return self.connect()
 
-    def __exit__(self, *exc):
+    def __exit__(self, *args):
         self.close()
 
     def login(self, username, password):
         self.username = username
-        self._secret = hashlib.sha256(password.encode("utf-8")).hexdigest()
-        return self._auth()
+        self.secret = hashlib.sha256(password.encode()).hexdigest()
+        return self.auth()
 
-    def _auth(self):
-        if self._secret is None:
-            raise ClientError("NOT_AUTHENTICATED", "no credentials stored")
-        send_frame(
-            self.sock,
-            "AUTH",
-            username=self.username,
-            password_sha256=self._secret,
-        )
-        hdr, _ = recv_frame(self.sock)
-        if hdr["type"] == "ERROR":
-            raise ClientError(hdr.get("code", "ERROR"), hdr.get("message", ""))
-        if hdr["type"] != "AUTH_OK":
-            raise ClientError("BAD_RESPONSE", hdr["type"])
-        self.token = hdr["token"]
-        return hdr
+    def auth(self):
+        send_frame(self.sock, "AUTH", username=self.username, password_sha256=self.secret)
+        header, payload = recv_frame(self.sock)
+        if header["type"] == "ERROR":
+            raise ClientError(header.get("code", "ERROR"), header.get("message", ""))
+        if header["type"] != "AUTH_OK":
+            raise ClientError("BAD_RESPONSE", header["type"])
+        self.token = header["token"]
+        return header
 
-    def _request(self, msg_type, **fields):
-        if self.token is None:
-            raise ClientError("NOT_AUTHENTICATED", "not logged in")
-        for attempt in (0, 1):
+    def request(self, msg_type, **fields):
+        send_frame(self.sock, msg_type, token=self.token, **fields)
+        header, payload = recv_frame(self.sock)
+
+        if header["type"] == "ERROR" and header.get("code") == "NOT_AUTHENTICATED":
+            self.auth()
             send_frame(self.sock, msg_type, token=self.token, **fields)
-            hdr, payload = recv_frame(self.sock)
-            if hdr["type"] != "ERROR":
-                return hdr, payload
-            if (
-                hdr.get("code") == "NOT_AUTHENTICATED"
-                and attempt == 0
-                and self._secret is not None
-            ):
-                self._auth()
-                continue
-            raise ClientError(hdr.get("code", "ERROR"), hdr.get("message", ""))
-        raise ClientError("NOT_AUTHENTICATED", "re-authentication failed")
+            header, payload = recv_frame(self.sock)
+
+        if header["type"] == "ERROR":
+            raise ClientError(header.get("code", "ERROR"), header.get("message", ""))
+
+        return header, payload
 
     def list_files(self):
-        hdr, payload = self._request("LIST")
-        if hdr["type"] != "LIST_RESP":
-            raise ClientError("BAD_RESPONSE", hdr["type"])
-        return json.loads(payload.decode("utf-8")) if payload else []
+        header, payload = self.request("LIST")
+        if header["type"] != "LIST_RESP":
+            raise ClientError("BAD_RESPONSE", header["type"])
+        if payload:
+            return json.loads(payload.decode())
+        return []
 
     def upload(self, path, name=None):
-        name = name or os.path.basename(path)
+        if name is None:
+            name = os.path.basename(path)
+
         size = os.path.getsize(path)
-        digest = sha256_file(path)
-        start = time.monotonic()
+        sha = sha256_file(path)
+        start = time.time()
 
-        hdr, _ = self._request(
-            "UPLOAD_INIT", filename=name, size=size, sha256=digest
-        )
-        if hdr["type"] != "OK":
-            raise ClientError("BAD_RESPONSE", hdr["type"])
+        header, payload = self.request("UPLOAD_INIT", filename=name, size=size, sha256=sha)
+        if header["type"] != "OK":
+            raise ClientError("BAD_RESPONSE", header["type"])
 
-        seq = 0
-        with open(path, "rb") as f:
+        number = 0
+        with open(path, "rb") as file:
             while True:
-                block = f.read(CHUNK_SIZE)
-                if not block:
+                data = file.read(CHUNK_SIZE)
+                if not data:
                     break
-                send_frame(self.sock, "CHUNK", block, seq=seq)
-                seq += 1
+                send_frame(self.sock, "CHUNK", data, seq=number)
+                number += 1
 
-        send_frame(self.sock, "UPLOAD_DONE", sha256=digest, chunks=seq)
-        hdr, _ = recv_frame(self.sock)
-        if hdr["type"] == "ERROR":
-            raise ClientError(hdr.get("code", "ERROR"), hdr.get("message", ""))
-        if hdr["type"] != "UPLOAD_OK":
-            raise ClientError("BAD_RESPONSE", hdr["type"])
+        send_frame(self.sock, "UPLOAD_DONE", sha256=sha, chunks=number)
+        header, payload = recv_frame(self.sock)
+        if header["type"] == "ERROR":
+            raise ClientError(header.get("code", "ERROR"), header.get("message", ""))
+        if header["type"] != "UPLOAD_OK":
+            raise ClientError("BAD_RESPONSE", header["type"])
 
-        return self._record("upload", name, size, start)
+        return self.record("upload", name, size, start)
 
     def download(self, filename, dest=None):
-        dest = dest or os.path.basename(filename)
-        start = time.monotonic()
+        if dest is None:
+            dest = os.path.basename(filename)
 
-        hdr, _ = self._request("DOWNLOAD_REQ", filename=filename)
-        if hdr["type"] != "DOWNLOAD_INIT":
-            raise ClientError("BAD_RESPONSE", hdr["type"])
-        expected_sha = hdr["sha256"]
-        expected_size = hdr["size"]
+        start = time.time()
+        header, payload = self.request("DOWNLOAD_REQ", filename=filename)
+        if header["type"] != "DOWNLOAD_INIT":
+            raise ClientError("BAD_RESPONSE", header["type"])
 
-        tmp = dest + ".part"
+        expected_sha = header["sha256"]
+        expected_size = header["size"]
+        temp = dest + ".part"
         digest = hashlib.sha256()
         total = 0
-        chunks = 0
+        number = 0
 
         try:
-            with open(tmp, "wb") as f:
+            with open(temp, "wb") as file:
                 while True:
-                    fhdr, payload = recv_frame(self.sock)
-                    if fhdr["type"] == "ERROR":
-                        raise ClientError(
-                            fhdr.get("code", "ERROR"), fhdr.get("message", "")
-                        )
-                    if fhdr["type"] == "CHUNK":
-                        if fhdr.get("seq") != chunks:
-                            raise ClientError(
-                                "BAD_SEQ", f"expected {chunks}, got {fhdr.get('seq')}"
-                            )
-                        f.write(payload)
-                        digest.update(payload)
-                        total += len(payload)
-                        chunks += 1
+                    frame, data = recv_frame(self.sock)
+                    if frame["type"] == "ERROR":
+                        raise ClientError(frame.get("code", "ERROR"), frame.get("message", ""))
+                    if frame["type"] == "CHUNK":
+                        if frame.get("seq") != number:
+                            raise ClientError("BAD_SEQ", "wrong chunk number")
+                        file.write(data)
+                        digest.update(data)
+                        total += len(data)
+                        number += 1
                         continue
-                    if fhdr["type"] == "DOWNLOAD_DONE":
-                        if fhdr.get("chunks") != chunks:
-                            raise ClientError(
-                                "TRUNCATED", f"{chunks} of {fhdr.get('chunks')} chunks"
-                            )
+                    if frame["type"] == "DOWNLOAD_DONE":
+                        if frame.get("chunks") != number:
+                            raise ClientError("TRUNCATED", "file is incomplete")
                         break
-                    raise ClientError("BAD_RESPONSE", fhdr["type"])
-        except BaseException:
-            if os.path.exists(tmp):
-                os.remove(tmp)
+                    raise ClientError("BAD_RESPONSE", frame["type"])
+        except Exception:
+            if os.path.exists(temp):
+                os.remove(temp)
             raise
 
         if total != expected_size or digest.hexdigest() != expected_sha:
-            os.remove(tmp)
+            os.remove(temp)
             raise ClientError("HASH_MISMATCH", filename)
 
-        os.replace(tmp, dest)
-        return self._record("download", filename, total, start)
+        os.replace(temp, dest)
+        return self.record("download", filename, total, start)
 
     def quit(self):
         try:
-            if self.token is not None:
-                self._request("QUIT")
+            if self.token:
+                self.request("QUIT")
         finally:
             self.close()
 
-    def _record(self, op, name, nbytes, start):
-        end = time.monotonic()
+    def record(self, op, filename, size, start):
+        end = time.time()
         seconds = end - start
-        mbps = (nbytes * 8 / seconds / 1e6) if seconds > 0 else 0.0
-        entry = {
+        speed = 0
+        if seconds > 0:
+            speed = size * 8 / seconds / 1000000
+
+        item = {
             "op": op,
-            "filename": name,
-            "bytes": nbytes,
+            "filename": filename,
+            "bytes": size,
             "start": start,
             "end": end,
             "seconds": seconds,
-            "mbps": mbps,
+            "mbps": speed,
         }
-        self.stats.append(entry)
-        return entry
+        self.stats.append(item)
+        return item
 
 
-def format_stat(entry):
-    return (
-        f"{entry['op']:8s} {entry['filename']:32s} "
-        f"{entry['bytes']:>12,d} B  {entry['seconds']:>8.3f} s  "
-        f"{entry['mbps']:>9.2f} Mbps"
-    )
+def format_stat(item):
+    return (f"{item['op']:8s} {item['filename']:32s} "
+            f"{item['bytes']:>12,d} B  {item['seconds']:>8.3f} s  "
+            f"{item['mbps']:>9.2f} Mbps")
 
 
 def run_parallel(host, port, user, password, tasks, limit):
-    lock = threading.Lock()
     results = []
     errors = []
+    lock = threading.Lock()
     slots = threading.Semaphore(limit)
 
-    def worker(op, args):
+    def worker(op, filename):
         with slots:
             client = Client(host, port)
             try:
                 client.connect()
                 client.login(user, password)
-                fn = client.upload if op == "upload" else client.download
-                entry = fn(*args)
+                if op == "upload":
+                    result = client.upload(filename)
+                else:
+                    result = client.download(filename)
                 with lock:
-                    results.append(entry)
-            except Exception as exc:
+                    results.append(result)
+            except Exception as error:
                 with lock:
-                    errors.append((op, args, exc))
+                    errors.append((op, filename, error))
             finally:
                 client.close()
 
-    threads = [threading.Thread(target=worker, args=t) for t in tasks]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+    threads = []
+    for op, filename in tasks:
+        thread = threading.Thread(target=worker, args=(op, filename))
+        threads.append(thread)
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
 
     return results, errors
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="CNDF v1.0 client")
+    parser = argparse.ArgumentParser()
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("-u", "--user", required=True)
     parser.add_argument("-p", "--password", required=True)
-    parser.add_argument(
-        "-j", "--jobs", type=int, default=1, help="max simultaneous connections"
-    )
-    sub = parser.add_subparsers(dest="cmd", required=True)
-
-    sub.add_parser("ls")
-    put = sub.add_parser("put")
-    put.add_argument("files", nargs="+")
-    get = sub.add_parser("get")
-    get.add_argument("files", nargs="+")
-
+    parser.add_argument("-j", "--jobs", type=int, default=1)
+    parser.add_argument("command", choices=["ls", "put", "get"])
+    parser.add_argument("files", nargs="*")
     args = parser.parse_args(argv)
 
     try:
-        if args.cmd == "ls":
-            client = Client(args.host, args.port).connect()
+        if args.command == "ls":
+            client = Client(args.host, args.port)
+            client.connect()
             try:
                 client.login(args.user, args.password)
-                records = client.list_files()
+                files = client.list_files()
             finally:
                 client.quit()
-            if not records:
+
+            if not files:
                 print("(no files)")
-            for r in records:
-                print(
-                    f"{r['filename']:32s} {r['size']:>12,d} B  "
-                    f"{r.get('owner', '-'):10s} {r.get('upload_time', '-')}  "
-                    f"{r.get('sha256', '')[:12]}"
-                )
+            for item in files:
+                print(f"{item['filename']:32s} {item['size']:>12,d} B  "
+                      f"{item['owner']:10s} {item['upload_time']}  "
+                      f"{item['sha256'][:12]}")
             return 0
 
-        tasks = [
-            ("upload" if args.cmd == "put" else "download", (path,))
-            for path in args.files
-        ]
+        if not args.files:
+            parser.error("give at least one file")
 
-        if args.jobs <= 1 and len(tasks) == 1:
-            client = Client(args.host, args.port).connect()
+        if args.jobs <= 1 and len(args.files) == 1:
+            client = Client(args.host, args.port)
+            client.connect()
             try:
                 client.login(args.user, args.password)
-                fn = client.upload if args.cmd == "put" else client.download
-                entry = fn(args.files[0])
-                client.stats.append(entry)
-                results, errors = [entry], []
+                if args.command == "put":
+                    item = client.upload(args.files[0])
+                else:
+                    item = client.download(args.files[0])
+                results = [item]
+                errors = []
             finally:
                 client.quit()
         else:
+            tasks = []
+            for filename in args.files:
+                if args.command == "put":
+                    tasks.append(("upload", filename))
+                else:
+                    tasks.append(("download", filename))
             results, errors = run_parallel(
                 args.host, args.port, args.user, args.password, tasks, args.jobs
             )
 
-        for entry in sorted(results, key=lambda e: e["start"]):
-            print(format_stat(entry))
-        for op, task, exc in errors:
-            print(f"{op} {task[0]}: FAILED — {exc}", file=sys.stderr)
+        for item in sorted(results, key=lambda row: row["start"]):
+            print(format_stat(item))
+        for op, filename, error in errors:
+            print(f"{op} {filename}: FAILED - {error}", file=sys.stderr)
 
         if len(results) > 1:
-            span = max(e["end"] for e in results) - min(e["start"] for e in results)
-            total = sum(e["bytes"] for e in results)
-            agg = (total * 8 / span / 1e6) if span > 0 else 0.0
-            print(
-                f"aggregate: {len(results)} transfers, {total:,d} B, "
-                f"{span:.3f} s wall, {agg:.2f} Mbps"
-            )
+            start = min(item["start"] for item in results)
+            end = max(item["end"] for item in results)
+            span = end - start
+            total = sum(item["bytes"] for item in results)
+            speed = 0
+            if span > 0:
+                speed = total * 8 / span / 1000000
+            print(f"aggregate: {len(results)} transfers, {total:,d} B, "
+                  f"{span:.3f} s wall, {speed:.2f} Mbps")
 
-        return 1 if errors else 0
+        if errors:
+            return 1
+        return 0
 
-    except ClientError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+    except ClientError as error:
+        print("error:", error, file=sys.stderr)
         return 2
-    except (ConnectionError, socket.timeout, OSError) as exc:
-        print(f"connection error: {exc}", file=sys.stderr)
+    except OSError as error:
+        print("connection error:", error, file=sys.stderr)
         return 3
 
 

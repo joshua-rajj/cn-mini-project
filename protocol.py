@@ -1,76 +1,72 @@
-"""Wire protocol shared by the server and the client.
-
-Every message is:
-
-    MAGIC (4 bytes) | header length (4 bytes, big endian) | JSON header | payload
-
-The JSON header always has "type" and "payload_len". Extra fields depend on
-the message type (for example "token" or "filename").
-"""
-
+import hashlib
 import json
 import struct
 
-MAGIC        = b"\xC0\xDE\x00\x01"   # marker + version 1
-MAX_HEADER   = 1 << 20               # 1 MiB
-MAX_PAYLOAD  = 8 << 20               # 8 MiB
-CHUNK_SIZE   = 64 * 1024             # 64 KiB
+MAGIC = b"\xC0\xDE\x00\x01"
+MAX_HEADER = 1024 * 1024
+MAX_PAYLOAD = 8 * 1024 * 1024
+CHUNK_SIZE = 64 * 1024
 
 
 class ProtocolError(Exception):
-    """Raised on any malformed frame. Fatal to the connection."""
+    pass
 
 
-def recv_exact(sock, n):
-    """Read exactly n bytes, or raise. The one correct way to read a socket."""
-    buf = bytearray()
-    while len(buf) < n:
-        chunk = sock.recv(n - len(buf))
-        if not chunk:
-            raise ConnectionError(
-                f"peer closed after {len(buf)}/{n} bytes"
-            )
-        buf += chunk
-    return bytes(buf)
+def recv_exact(sock, size):
+    data = b""
+    while len(data) < size:
+        part = sock.recv(size - len(data))
+        if not part:
+            raise ConnectionError("connection closed")
+        data += part
+    return data
 
 
 def send_frame(sock, msg_type, payload=b"", **fields):
-    """Pack and send one frame."""
     header = {"type": msg_type, "payload_len": len(payload)}
     header.update(fields)
-    raw = json.dumps(header, separators=(",", ":")).encode("utf-8")
-    if len(raw) > MAX_HEADER:
-        raise ProtocolError(f"header too large: {len(raw)}")
-    sock.sendall(MAGIC + struct.pack(">I", len(raw)) + raw + payload)
+    header_data = json.dumps(header).encode()
+
+    if len(header_data) > MAX_HEADER:
+        raise ProtocolError("header too big")
+
+    sock.sendall(MAGIC)
+    sock.sendall(struct.pack(">I", len(header_data)))
+    sock.sendall(header_data)
+    sock.sendall(payload)
 
 
 def recv_frame(sock):
-    """Read exactly one frame. Returns (header_dict, payload_bytes)."""
     magic = recv_exact(sock, 4)
     if magic != MAGIC:
-        raise ProtocolError(f"bad magic {magic!r}")
+        raise ProtocolError("wrong magic number")
 
-    (header_len,) = struct.unpack(">I", recv_exact(sock, 4))
-    if header_len > MAX_HEADER:
-        raise ProtocolError(f"header too large: {header_len}")
+    size_data = recv_exact(sock, 4)
+    header_size = struct.unpack(">I", size_data)[0]
+    if header_size > MAX_HEADER:
+        raise ProtocolError("header too big")
 
-    header = json.loads(recv_exact(sock, header_len).decode("utf-8"))
+    header_data = recv_exact(sock, header_size)
+    header = json.loads(header_data.decode())
 
-    payload_len = header.get("payload_len", 0)
-    if not isinstance(payload_len, int) or payload_len < 0:
-        raise ProtocolError(f"bad payload_len {payload_len!r}")
-    if payload_len > MAX_PAYLOAD:
-        raise ProtocolError(f"payload too large: {payload_len}")
+    payload_size = header.get("payload_len", 0)
+    if payload_size < 0 or payload_size > MAX_PAYLOAD:
+        raise ProtocolError("bad payload size")
 
-    payload = recv_exact(sock, payload_len) if payload_len else b""
+    if payload_size > 0:
+        payload = recv_exact(sock, payload_size)
+    else:
+        payload = b""
+
     return header, payload
 
 
-def sha256_file(path, block=1 << 20):
-    """Lowercase hex SHA-256 of a file on disk."""
-    import hashlib
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for block_bytes in iter(lambda: f.read(block), b""):
-            h.update(block_bytes)
-    return h.hexdigest()
+def sha256_file(path):
+    sha = hashlib.sha256()
+    with open(path, "rb") as file:
+        while True:
+            data = file.read(1024 * 1024)
+            if not data:
+                break
+            sha.update(data)
+    return sha.hexdigest()

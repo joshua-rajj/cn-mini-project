@@ -1,27 +1,3 @@
-"""Ryu controller for the file sharing project.
-
-It does two things:
-
-1. Acts as a normal learning switch, so ARP, ping and the web dashboards work.
-2. Blocks traffic going to the file server's TCP port (9000) unless that
-   client has logged in. Logging in adds the client's IP to `allowed` and
-   installs an OpenFlow rule for it. Logging out removes it again.
-
-The Flask server controls this over a small HTTP API on port 8080:
-
-    POST /grant   {"ip": "10.0.0.11"}
-    POST /revoke  {"ip": "10.0.0.11"}
-    GET  /state
-
-The controller runs in the root namespace, but the Flask server runs inside
-the `server` host, which has its own loopback. So the API listens on all
-interfaces and the server calls it at http://10.0.0.254:8080 (the management
-interface added by topology.py).
-
-Run with:
-    envs/ryu/bin/ryu-manager SDN/controller.py
-"""
-
 import json
 import os
 import threading
@@ -37,66 +13,85 @@ SERVER_IP = os.environ.get("SERVER_IP", "10.0.0.1")
 TRANSFER_PORT = int(os.environ.get("TRANSFER_PORT", "9000"))
 REST_PORT = int(os.environ.get("REST_PORT", "8080"))
 
-# Flow priorities. Higher numbers win.
 TABLE_MISS = 0
 LEARNED = 10
-PROTECTED = 100   # send server:9000 traffic to the controller
-ALLOW = 200       # logged-in client, let it through
+PROTECTED = 100
+ALLOW = 200
 
-datapaths = {}    # switch id -> datapath
-mac_table = {}    # switch id -> {mac address: port}
-allowed = set()   # IPs that may use the file server
-blocked = 0       # how many packets we refused
-
-
-def log(message):
-    print("[controller] " + message, flush=True)
+datapaths = {}
+mac_table = {}
+allowed = set()
+blocked = 0
 
 
 def add_flow(dp, priority, match, actions):
     parser = dp.ofproto_parser
-    instructions = [
-        parser.OFPInstructionActions(dp.ofproto.OFPIT_APPLY_ACTIONS, actions)
-    ]
-    dp.send_msg(parser.OFPFlowMod(
-        datapath=dp, priority=priority, match=match, instructions=instructions))
+    instruction = parser.OFPInstructionActions(
+        dp.ofproto.OFPIT_APPLY_ACTIONS, actions
+    )
+    message = parser.OFPFlowMod(
+        datapath=dp,
+        priority=priority,
+        match=match,
+        instructions=[instruction],
+    )
+    dp.send_msg(message)
 
 
-def install_allow(dp, ip):
-    """Let one client use the file server, in both directions."""
+def allow_client(dp, ip):
     parser = dp.ofproto_parser
-    out = [parser.OFPActionOutput(dp.ofproto.OFPP_NORMAL)]
+    actions = [parser.OFPActionOutput(dp.ofproto.OFPP_NORMAL)]
 
-    # client -> server:9000
-    match = parser.OFPMatch(eth_type=0x0800, ip_proto=6,
-                            ipv4_src=ip, ipv4_dst=SERVER_IP,
-                            tcp_dst=TRANSFER_PORT)
-    add_flow(dp, ALLOW, match, out)
+    match = parser.OFPMatch(
+        eth_type=0x0800,
+        ip_proto=6,
+        ipv4_src=ip,
+        ipv4_dst=SERVER_IP,
+        tcp_dst=TRANSFER_PORT,
+    )
+    add_flow(dp, ALLOW, match, actions)
 
-    # server:9000 -> client (the replies)
-    match = parser.OFPMatch(eth_type=0x0800, ip_proto=6,
-                            ipv4_src=SERVER_IP, ipv4_dst=ip,
-                            tcp_src=TRANSFER_PORT)
-    add_flow(dp, ALLOW, match, out)
+    match = parser.OFPMatch(
+        eth_type=0x0800,
+        ip_proto=6,
+        ipv4_src=SERVER_IP,
+        ipv4_dst=ip,
+        tcp_src=TRANSFER_PORT,
+    )
+    add_flow(dp, ALLOW, match, actions)
 
 
-def remove_allow(dp, ip):
+def remove_client(dp, ip):
     parser = dp.ofproto_parser
     ofproto = dp.ofproto
-    for match in (
-        parser.OFPMatch(eth_type=0x0800, ip_proto=6, ipv4_src=ip,
-                        ipv4_dst=SERVER_IP, tcp_dst=TRANSFER_PORT),
-        parser.OFPMatch(eth_type=0x0800, ip_proto=6, ipv4_src=SERVER_IP,
-                        ipv4_dst=ip, tcp_src=TRANSFER_PORT),
-    ):
-        dp.send_msg(parser.OFPFlowMod(
-            datapath=dp, command=ofproto.OFPFC_DELETE, match=match,
-            out_port=ofproto.OFPP_ANY, out_group=ofproto.OFPG_ANY))
+
+    match1 = parser.OFPMatch(
+        eth_type=0x0800,
+        ip_proto=6,
+        ipv4_src=ip,
+        ipv4_dst=SERVER_IP,
+        tcp_dst=TRANSFER_PORT,
+    )
+    match2 = parser.OFPMatch(
+        eth_type=0x0800,
+        ip_proto=6,
+        ipv4_src=SERVER_IP,
+        ipv4_dst=ip,
+        tcp_src=TRANSFER_PORT,
+    )
+
+    for match in (match1, match2):
+        message = parser.OFPFlowMod(
+            datapath=dp,
+            command=ofproto.OFPFC_DELETE,
+            match=match,
+            out_port=ofproto.OFPP_ANY,
+            out_group=ofproto.OFPG_ANY,
+        )
+        dp.send_msg(message)
 
 
 class ControlHandler(BaseHTTPRequestHandler):
-    """Tiny HTTP API used by the Flask server to grant/revoke access."""
-
     def reply(self, data, status=200):
         body = json.dumps(data).encode()
         self.send_response(status)
@@ -121,20 +116,20 @@ class ControlHandler(BaseHTTPRequestHandler):
         elif self.path == "/grant":
             allowed.add(ip)
             for dp in datapaths.values():
-                install_allow(dp, ip)
-            log("granted " + ip)
+                allow_client(dp, ip)
+            print("granted", ip, flush=True)
             self.reply({"ok": True, "granted": ip})
         elif self.path == "/revoke":
             allowed.discard(ip)
             for dp in datapaths.values():
-                remove_allow(dp, ip)
-            log("revoked " + ip)
+                remove_client(dp, ip)
+            print("revoked", ip, flush=True)
             self.reply({"ok": True, "revoked": ip})
         else:
             self.reply({"ok": False, "error": "unknown path"}, 404)
 
     def log_message(self, *args):
-        pass  # keep the console quiet
+        pass
 
 
 class Firewall(app_manager.RyuApp):
@@ -143,8 +138,10 @@ class Firewall(app_manager.RyuApp):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         server = ThreadingHTTPServer(("0.0.0.0", REST_PORT), ControlHandler)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        log("control API on port %d" % REST_PORT)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.daemon = True
+        thread.start()
+        print("control API on port", REST_PORT, flush=True)
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_connected(self, ev):
@@ -153,24 +150,30 @@ class Firewall(app_manager.RyuApp):
         parser = dp.ofproto_parser
         ofproto = dp.ofproto
 
-        # Unknown packets come to the controller.
-        add_flow(dp, TABLE_MISS, parser.OFPMatch(),
-                 [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
-                                         ofproto.OFPCML_NO_BUFFER)])
+        add_flow(
+            dp,
+            TABLE_MISS,
+            parser.OFPMatch(),
+            [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)],
+        )
 
-        # Server traffic always comes to the controller first, so the learned
-        # MAC rules above can never skip the login check.
-        match = parser.OFPMatch(eth_type=0x0800, ip_proto=6,
-                                ipv4_dst=SERVER_IP, tcp_dst=TRANSFER_PORT)
-        add_flow(dp, PROTECTED, match,
-                 [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
-                                         ofproto.OFPCML_NO_BUFFER)])
+        match = parser.OFPMatch(
+            eth_type=0x0800,
+            ip_proto=6,
+            ipv4_dst=SERVER_IP,
+            tcp_dst=TRANSFER_PORT,
+        )
+        add_flow(
+            dp,
+            PROTECTED,
+            match,
+            [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)],
+        )
 
-        # If clients logged in before the switch connected, add them now.
         for ip in allowed:
-            install_allow(dp, ip)
+            allow_client(dp, ip)
 
-        log("switch %s connected" % dp.id)
+        print("switch", dp.id, "connected", flush=True)
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in(self, ev):
@@ -190,7 +193,6 @@ class Firewall(app_manager.RyuApp):
         ip_pkt = pkt.get_protocol(ipv4.ipv4)
         tcp_pkt = pkt.get_protocol(tcp.tcp)
 
-        # Traffic for the protected file server.
         if (ip_pkt and tcp_pkt and ip_pkt.dst == SERVER_IP
                 and tcp_pkt.dst_port == TRANSFER_PORT):
             if ip_pkt.src in allowed:
@@ -198,17 +200,19 @@ class Firewall(app_manager.RyuApp):
                 self.send_out(dp, msg, in_port, out_port)
             else:
                 blocked += 1
-                log("blocked %s -> %s:%d" % (ip_pkt.src, SERVER_IP, TRANSFER_PORT))
+                print("blocked", ip_pkt.src, "to", SERVER_IP, TRANSFER_PORT, flush=True)
             return
 
-        # Normal learning switch.
         out_port = mac_table[dp.id].get(eth.dst)
         if out_port is None:
             out_port = dp.ofproto.OFPP_FLOOD
         else:
             parser = dp.ofproto_parser
-            match = parser.OFPMatch(in_port=in_port, eth_src=eth.src,
-                                    eth_dst=eth.dst)
+            match = parser.OFPMatch(
+                in_port=in_port,
+                eth_src=eth.src,
+                eth_dst=eth.dst,
+            )
             add_flow(dp, LEARNED, match, [parser.OFPActionOutput(out_port)])
 
         self.send_out(dp, msg, in_port, out_port)
@@ -218,6 +222,11 @@ class Firewall(app_manager.RyuApp):
         data = None
         if msg.buffer_id == dp.ofproto.OFP_NO_BUFFER:
             data = msg.data
-        dp.send_msg(parser.OFPPacketOut(
-            datapath=dp, buffer_id=msg.buffer_id, in_port=in_port,
-            actions=[parser.OFPActionOutput(out_port)], data=data))
+        message = parser.OFPPacketOut(
+            datapath=dp,
+            buffer_id=msg.buffer_id,
+            in_port=in_port,
+            actions=[parser.OFPActionOutput(out_port)],
+            data=data,
+        )
+        dp.send_msg(message)

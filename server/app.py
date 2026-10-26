@@ -1,11 +1,3 @@
-"""Server dashboard on port 5000.
-
-Also:
-  * starts the TCP file server (tcp_server.py) in a background thread
-  * checks the login password and tells the SDN controller to allow or
-    block that client's IP
-"""
-
 import json
 import os
 import threading
@@ -13,66 +5,72 @@ import urllib.request
 
 from flask import Flask, jsonify, render_template, request
 
-from tcp_server import (SERVER_PASSWORD as PASSWORD, active_clients,
-                        bandwidth_stats, serve)
+from tcp_server import SERVER_PASSWORD, active_clients, bandwidth_stats, serve
 
 CONTROLLER = os.environ.get("CONTROLLER_URL", "http://10.0.0.254:8080")
 
 app = Flask(__name__)
 
 
-def call_controller(path, ip):
-    """Ask the Ryu controller to grant or revoke one client IP."""
-    body = json.dumps({"ip": ip}).encode()
-    req = urllib.request.Request(CONTROLLER + path, data=body,
-                                 headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=5) as response:
+def controller_call(path, ip):
+    data = json.dumps({"ip": ip}).encode()
+    req = urllib.request.Request(
+        CONTROLLER + path,
+        data=data,
+        headers={"Content-Type": "application/json"},
+    )
+    response = urllib.request.urlopen(req, timeout=5)
+    with response:
         return json.loads(response.read())
 
 
 @app.route("/")
-def dashboard():
+def home():
     return render_template("dashboard.html")
 
 
 @app.route("/api/clients")
-def api_clients():
+def client_list():
     return jsonify({"ok": True, "clients": active_clients()})
 
 
 @app.route("/api/bandwidth")
-def api_bandwidth():
-    return jsonify(dict(ok=True, **bandwidth_stats()))
+def bandwidth():
+    data = bandwidth_stats()
+    data["ok"] = True
+    return jsonify(data)
 
 
 @app.route("/api/login", methods=["POST"])
-def api_login():
+def login():
     data = request.get_json(silent=True) or {}
-    if data.get("password") != PASSWORD:
+    if data.get("password") != SERVER_PASSWORD:
         return jsonify({"ok": False, "error": "wrong password"}), 401
 
     ip = request.remote_addr
     try:
-        call_controller("/grant", ip)
+        controller_call("/grant", ip)
     except OSError as error:
-        return jsonify({"ok": False, "error": "controller: %s" % error}), 502
+        return jsonify({"ok": False, "error": str(error)}), 502
 
-    print("[server] login from %s" % ip)
+    print("login from", ip)
     return jsonify({"ok": True, "ip": ip})
 
 
 @app.route("/api/logout", methods=["POST"])
-def api_logout():
+def logout():
     ip = request.remote_addr
     try:
-        call_controller("/revoke", ip)
+        controller_call("/revoke", ip)
     except OSError as error:
-        return jsonify({"ok": False, "error": "controller: %s" % error}), 502
+        return jsonify({"ok": False, "error": str(error)}), 502
 
-    print("[server] logout from %s" % ip)
+    print("logout from", ip)
     return jsonify({"ok": True, "ip": ip})
 
 
 if __name__ == "__main__":
-    threading.Thread(target=serve, daemon=True).start()
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    thread = threading.Thread(target=serve)
+    thread.daemon = True
+    thread.start()
+    app.run(host="0.0.0.0", port=5000)

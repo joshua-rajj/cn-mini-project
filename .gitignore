@@ -16,7 +16,9 @@ logs/
 *.sqlite3
 server/metadata.csv
 server/storage/*.bin
+server/storage/*.txt
 client/downloads/*.bin
+client/downloads/*.txt
 
 # secrets / local config
 .env

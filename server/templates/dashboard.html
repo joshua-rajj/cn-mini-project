@@ -125,7 +125,6 @@
         peak = Math.max(peak, point.upload, point.download);
       });
 
-      // Horizontal grid lines with a rate label each.
       ctx.font = '12px Arial';
       ctx.textAlign = 'right';
       for (let i = 0; i <= 2; i++) {
@@ -190,7 +189,7 @@
           }).join('');
         }
       } catch (error) {
-        // Keep the last values on screen if one refresh fails.
+        console.log(error);
       }
     }
 

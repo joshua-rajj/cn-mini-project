@@ -1,10 +1,3 @@
-"""Client dashboard on port 5001.
-
-The browser login checks the password with the server and asks the SDN
-controller to allow this client's IP. After that, uploads and downloads use
-the Client class from client.py (the teammate code, framed protocol).
-"""
-
 import json
 import os
 import tempfile
@@ -22,12 +15,11 @@ SERVER_PORT = int(os.environ.get("FILE_SERVER_PORT", "9000"))
 CLIENT_NAME = os.environ.get("CLIENT_NAME", "client")
 CLIENT_ID = os.environ.get("CLIENT_ID", "client1")
 
-DOWNLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                               "downloads")
+DOWNLOADS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloads")
 
 app = Flask(__name__)
 logged_in = False
-session_password = None
+password = None
 
 
 def page(error=None):
@@ -38,7 +30,6 @@ def page(error=None):
 
 
 def post_to_server(path, data):
-    """Call one of the server dashboard's JSON endpoints."""
     url = "http://%s:5000%s" % (SERVER_HOST, path)
     body = json.dumps(data).encode()
     req = urllib.request.Request(url, data=body,
@@ -47,18 +38,16 @@ def post_to_server(path, data):
         with urllib.request.urlopen(req, timeout=5) as response:
             return json.loads(response.read())
     except HTTPError as error:
-        # The server answered, but with an error status (e.g. wrong password).
         return json.loads(error.read())
 
 
 def send_heartbeat():
-    """Log in over TCP every 5 seconds so the server lists us as online."""
     while True:
-        if logged_in and session_password:
+        if logged_in and password:
             client = Client(SERVER_HOST, SERVER_PORT)
             try:
                 client.connect()
-                client.login(CLIENT_NAME, session_password)
+                client.login(CLIENT_NAME, password)
             except (OSError, ClientError):
                 pass
             finally:
@@ -67,13 +56,13 @@ def send_heartbeat():
 
 
 @app.route("/")
-def dashboard():
+def home():
     return page()
 
 
 @app.route("/login", methods=["POST"])
 def login():
-    global logged_in, session_password
+    global logged_in, password
     password = request.form.get("password", "")
 
     try:
@@ -85,38 +74,37 @@ def login():
         return page("Wrong password."), 401
 
     logged_in = True
-    session_password = password
     return redirect("/")
 
 
 @app.route("/logout", methods=["POST"])
 def logout():
-    global logged_in, session_password
+    global logged_in, password
     try:
         post_to_server("/api/logout", {})
     except OSError:
         pass
     logged_in = False
-    session_password = None
+    password = None
     return redirect("/")
 
 
 @app.route("/api/files")
-def api_files():
+def files():
     if not logged_in:
         return jsonify({"ok": False, "error": "not logged in", "files": []}), 401
 
     client = Client(SERVER_HOST, SERVER_PORT)
     try:
         client.connect()
-        client.login(CLIENT_NAME, session_password)
-        files = client.list_files()
+        client.login(CLIENT_NAME, password)
+        items = client.list_files()
     except (OSError, ClientError) as error:
         return jsonify({"ok": False, "error": str(error), "files": []}), 502
     finally:
         client.close()
 
-    return jsonify({"ok": True, "files": files})
+    return jsonify({"ok": True, "files": items})
 
 
 @app.route("/download/<name>")
@@ -127,13 +115,13 @@ def download(name):
     if os.path.basename(name) != name or name in ("", ".", ".."):
         abort(400)
 
-    os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
-    destination = os.path.join(DOWNLOAD_FOLDER, name)
+    os.makedirs(DOWNLOADS, exist_ok=True)
+    destination = os.path.join(DOWNLOADS, name)
 
     client = Client(SERVER_HOST, SERVER_PORT)
     try:
         client.connect()
-        client.login(CLIENT_NAME, session_password)
+        client.login(CLIENT_NAME, password)
         client.download(name, dest=destination)
     except (OSError, ClientError) as error:
         return "Download failed: %s" % error, 502
@@ -156,16 +144,15 @@ def upload():
     if name != uploaded.filename or name in ("", ".", ".."):
         return page("That filename is not allowed."), 400
 
-    os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
-    temporary = tempfile.NamedTemporaryFile(delete=False, dir=DOWNLOAD_FOLDER,
-                                            suffix=".part")
+    os.makedirs(DOWNLOADS, exist_ok=True)
+    temporary = tempfile.NamedTemporaryFile(delete=False, dir=DOWNLOADS, suffix=".part")
     temporary.close()
     uploaded.save(temporary.name)
 
     client = Client(SERVER_HOST, SERVER_PORT)
     try:
         client.connect()
-        client.login(CLIENT_NAME, session_password)
+        client.login(CLIENT_NAME, password)
         client.upload(temporary.name, name=name)
     except (OSError, ClientError) as error:
         return page("Upload failed: %s" % error), 502
@@ -178,6 +165,8 @@ def upload():
 
 
 if __name__ == "__main__":
-    os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
-    threading.Thread(target=send_heartbeat, daemon=True).start()
-    app.run(host="0.0.0.0", port=5001, debug=False)
+    os.makedirs(DOWNLOADS, exist_ok=True)
+    thread = threading.Thread(target=send_heartbeat)
+    thread.daemon = True
+    thread.start()
+    app.run(host="0.0.0.0", port=5001)
