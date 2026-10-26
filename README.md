@@ -155,9 +155,14 @@ Use `-j` to transfer several files at the same time:
 .venv/bin/python client/client.py --host 10.0.0.1 -u alice -p pass123 -j 4 put a.bin b.bin c.bin
 ```
 
-The server dashboard at <http://10.0.0.1:5000> shows which clients are online
-(a client is online while its heartbeat is getting through, which means it is
-logged in).
+The server dashboard at <http://10.0.0.1:5000> shows:
+
+- live upload and download rates (a 5-second average)
+- total bytes and transfer counts since the server started
+- a chart of the last 30 seconds
+- the last 20 transfers, with client, file, size and speed
+- which clients are online (a client is online while its heartbeat is getting
+  through, which means it is logged in)
 
 `curl localhost:8080/state` shows which IPs are allowed and how many packets
 were blocked.
@@ -170,6 +175,8 @@ were blocked.
   and the client checks the hash again after a download.
 - A filename is reserved while it is being uploaded, so two clients cannot
   write the same name at once.
+- Bandwidth counters live in memory and start again from zero when the server
+  restarts.
 - The control API on port 8080 is reachable from inside the Mininet network.
   That is fine for a class project, but in a real system it should be locked
   down.

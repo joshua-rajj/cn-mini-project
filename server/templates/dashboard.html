@@ -4,19 +4,70 @@
   <meta charset="utf-8">
   <title>Server Dashboard</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 40px; background: #f4f4f4; color: #222; }
+    body { font-family: Arial, sans-serif; margin: 40px; background: #f4f4f4; color: #222; max-width: 1000px; }
     h1 { margin-bottom: 4px; }
+    h2 { margin-top: 32px; margin-bottom: 10px; font-size: 18px; }
     .sub { color: #666; margin-top: 0; }
-    table { width: 100%; border-collapse: collapse; background: white; margin-top: 20px; }
-    th, td { text-align: left; padding: 10px; border-bottom: 1px solid #ddd; }
+    .cards { display: flex; gap: 16px; flex-wrap: wrap; }
+    .card { background: white; border: 1px solid #ddd; padding: 16px 20px; flex: 1; min-width: 180px; }
+    .card .label { display: block; color: #666; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .card .value { display: block; font-size: 26px; font-weight: bold; margin-top: 6px; }
+    .card.upload .value { color: #0a7a43; }
+    .card.download .value { color: #1a5fb4; }
+    .card .small { color: #777; font-size: 13px; margin-top: 4px; }
+    canvas { width: 100%; height: 180px; background: white; border: 1px solid #ddd; }
+    .legend { font-size: 13px; color: #555; margin: 6px 0 8px 0; }
+    .legend span { margin-right: 18px; }
+    .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }
+    table { width: 100%; border-collapse: collapse; background: white; margin-top: 10px; }
+    th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid #ddd; font-size: 14px; }
     th { background: #eaeaea; }
     .empty { text-align: center; color: #888; }
   </style>
 </head>
 <body>
   <h1>Server Dashboard</h1>
-  <p class="sub">Clients that sent a heartbeat in the last 30 seconds.</p>
+  <p class="sub">Live bandwidth and clients that sent a heartbeat in the last 30 seconds.</p>
 
+  <h2>Bandwidth</h2>
+  <div class="cards">
+    <div class="card upload">
+      <span class="label">Upload</span>
+      <span class="value" id="upload-rate">0 B/s</span>
+      <span class="small"><span id="upload-total">0 B</span> total &middot; <span id="upload-count">0</span> transfers</span>
+    </div>
+    <div class="card download">
+      <span class="label">Download</span>
+      <span class="value" id="download-rate">0 B/s</span>
+      <span class="small"><span id="download-total">0 B</span> total &middot; <span id="download-count">0</span> transfers</span>
+    </div>
+  </div>
+
+  <p class="legend">
+    <span><i class="dot" style="background:#0a7a43"></i>Upload</span>
+    <span><i class="dot" style="background:#1a5fb4"></i>Download</span>
+    last 30 seconds
+  </p>
+  <canvas id="chart" width="1000" height="180"></canvas>
+
+  <h2>Recent transfers</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Time</th>
+        <th>Direction</th>
+        <th>Client</th>
+        <th>File</th>
+        <th>Size</th>
+        <th>Speed</th>
+      </tr>
+    </thead>
+    <tbody id="transfers">
+      <tr><td colspan="6" class="empty">No transfers yet</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Online clients</h2>
   <table>
     <thead>
       <tr>
@@ -32,7 +83,118 @@
   </table>
 
   <script>
-    async function refresh() {
+    function formatBytes(bytes) {
+      if (bytes < 1024) {
+        return Math.round(bytes) + ' B';
+      }
+      if (bytes < 1024 * 1024) {
+        return (bytes / 1024).toFixed(1) + ' KiB';
+      }
+      if (bytes < 1024 * 1024 * 1024) {
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MiB';
+      }
+      return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GiB';
+    }
+
+    function formatRate(bytes) {
+      return formatBytes(bytes) + '/s';
+    }
+
+    function escapeHtml(text) {
+      return String(text).replace(/[&<>"']/g, function (ch) {
+        return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch];
+      });
+    }
+
+    function drawChart(history) {
+      const canvas = document.getElementById('chart');
+      const ctx = canvas.getContext('2d');
+      const width = canvas.width;
+      const height = canvas.height;
+      const left = 70;
+      const right = 12;
+      const top = 12;
+      const bottom = 20;
+      const plotWidth = width - left - right;
+      const plotHeight = height - top - bottom;
+
+      ctx.clearRect(0, 0, width, height);
+
+      let peak = 1;
+      history.forEach(function (point) {
+        peak = Math.max(peak, point.upload, point.download);
+      });
+
+      // Horizontal grid lines with a rate label each.
+      ctx.font = '12px Arial';
+      ctx.textAlign = 'right';
+      for (let i = 0; i <= 2; i++) {
+        const y = top + plotHeight * i / 2;
+        ctx.strokeStyle = '#eee';
+        ctx.beginPath();
+        ctx.moveTo(left, y);
+        ctx.lineTo(width - right, y);
+        ctx.stroke();
+
+        ctx.fillStyle = '#888';
+        ctx.fillText(formatRate(peak * (1 - i / 2)), left - 8, y + 4);
+      }
+
+      function line(key, colour) {
+        ctx.strokeStyle = colour;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        history.forEach(function (point, index) {
+          const x = left + plotWidth * index / (history.length - 1);
+          const y = top + plotHeight * (1 - point[key] / peak);
+          if (index === 0) {
+            ctx.moveTo(x, y);
+          } else {
+            ctx.lineTo(x, y);
+          }
+        });
+        ctx.stroke();
+      }
+
+      line('upload', '#0a7a43');
+      line('download', '#1a5fb4');
+    }
+
+    async function refreshBandwidth() {
+      try {
+        const response = await fetch('/api/bandwidth');
+        const data = await response.json();
+
+        document.getElementById('upload-rate').textContent = formatRate(data.upload_rate);
+        document.getElementById('download-rate').textContent = formatRate(data.download_rate);
+        document.getElementById('upload-total').textContent = formatBytes(data.upload_bytes);
+        document.getElementById('download-total').textContent = formatBytes(data.download_bytes);
+        document.getElementById('upload-count').textContent = data.upload_count;
+        document.getElementById('download-count').textContent = data.download_count;
+
+        drawChart(data.history);
+
+        const table = document.getElementById('transfers');
+        if (data.recent.length === 0) {
+          table.innerHTML = '<tr><td colspan="6" class="empty">No transfers yet</td></tr>';
+        } else {
+          table.innerHTML = data.recent.map(function (transfer) {
+            return '<tr>' +
+              '<td>' + escapeHtml(transfer.time) + '</td>' +
+              '<td>' + (transfer.direction === 'upload' ? 'Upload' : 'Download') + '</td>' +
+              '<td>' + escapeHtml(transfer.client) + '</td>' +
+              '<td>' + escapeHtml(transfer.filename) + '</td>' +
+              '<td>' + formatBytes(transfer.bytes) + '</td>' +
+              '<td>' + transfer.mbps.toFixed(2) + ' Mbps</td>' +
+              '</tr>';
+          }).join('');
+        }
+      } catch (error) {
+        // Keep the last values on screen if one refresh fails.
+      }
+    }
+
+    async function refreshClients() {
       const response = await fetch('/api/clients');
       const data = await response.json();
       const table = document.getElementById('clients');
@@ -44,16 +206,18 @@
 
       table.innerHTML = data.clients.map(function (client) {
         return '<tr>' +
-          '<td>' + client.name + '</td>' +
-          '<td>' + client.ip + '</td>' +
-          '<td>' + client.client_id + '</td>' +
-          '<td>' + client.last_seen + '</td>' +
+          '<td>' + escapeHtml(client.name) + '</td>' +
+          '<td>' + escapeHtml(client.ip) + '</td>' +
+          '<td>' + escapeHtml(client.client_id) + '</td>' +
+          '<td>' + escapeHtml(client.last_seen) + '</td>' +
           '</tr>';
       }).join('');
     }
 
-    refresh();
-    setInterval(refresh, 3000);
+    refreshBandwidth();
+    refreshClients();
+    setInterval(refreshBandwidth, 1000);
+    setInterval(refreshClients, 3000);
   </script>
 </body>
 </html>

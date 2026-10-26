@@ -13,7 +13,8 @@ import urllib.request
 
 from flask import Flask, jsonify, render_template, request
 
-from tcp_server import SERVER_PASSWORD as PASSWORD, active_clients, serve
+from tcp_server import (SERVER_PASSWORD as PASSWORD, active_clients,
+                        bandwidth_stats, serve)
 
 CONTROLLER = os.environ.get("CONTROLLER_URL", "http://10.0.0.254:8080")
 
@@ -37,6 +38,11 @@ def dashboard():
 @app.route("/api/clients")
 def api_clients():
     return jsonify({"ok": True, "clients": active_clients()})
+
+
+@app.route("/api/bandwidth")
+def api_bandwidth():
+    return jsonify(dict(ok=True, **bandwidth_stats()))
 
 
 @app.route("/api/login", methods=["POST"])

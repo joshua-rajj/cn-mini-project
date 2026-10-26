@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 import uuid
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -48,6 +49,19 @@ reserved_filenames = set()
 # Who is online, for the server dashboard.
 clients = {}
 clients_lock = threading.Lock()
+
+# Bandwidth counters, shared by all client threads and the dashboard.
+stats_lock = threading.Lock()
+buckets = {}                  # second -> [upload bytes, download bytes]
+recent_transfers = deque(maxlen=20)
+totals = {
+    "upload_bytes": 0,
+    "download_bytes": 0,
+    "upload_count": 0,
+    "download_count": 0,
+}
+RATE_WINDOW = 5               # seconds used for the live rate
+HISTORY_SECONDS = 30          # points shown on the chart
 
 
 # ---------------- CSV METADATA ----------------
@@ -172,6 +186,64 @@ def active_clients():
     return result
 
 
+# ---------------- BANDWIDTH STATISTICS ----------------
+
+def record_bytes(direction, count):
+    """Count bytes as they move, for the live bandwidth rate."""
+    second = int(time.time())
+    with stats_lock:
+        bucket = buckets.setdefault(second, [0, 0])
+        if direction == "upload":
+            bucket[0] += count
+            totals["upload_bytes"] += count
+        else:
+            bucket[1] += count
+            totals["download_bytes"] += count
+
+
+def record_transfer(direction, client, filename, size, seconds):
+    """Remember one finished transfer for the dashboard table."""
+    with stats_lock:
+        totals[direction + "_count"] += 1
+        recent_transfers.appendleft({
+            "time": time.strftime("%H:%M:%S"),
+            "direction": direction,
+            "client": client,
+            "filename": filename,
+            "bytes": size,
+            "seconds": round(seconds, 3),
+            "mbps": round(size * 8 / seconds / 1e6, 2) if seconds > 0 else 0.0,
+        })
+
+
+def bandwidth_stats():
+    """Current rates, totals, the last 30 seconds and recent transfers."""
+    now = time.time()
+    with stats_lock:
+        # Throw away old buckets so the dictionary does not grow forever.
+        for second in [s for s in buckets if s < now - 120]:
+            del buckets[second]
+
+        upload = sum(b[0] for s, b in buckets.items() if s > now - RATE_WINDOW)
+        download = sum(b[1] for s, b in buckets.items() if s > now - RATE_WINDOW)
+
+        history = []
+        for offset in range(HISTORY_SECONDS - 1, -1, -1):
+            bucket = buckets.get(int(now) - offset, [0, 0])
+            history.append({"upload": bucket[0], "download": bucket[1]})
+
+        return {
+            "upload_rate": upload / RATE_WINDOW,
+            "download_rate": download / RATE_WINDOW,
+            "upload_bytes": totals["upload_bytes"],
+            "download_bytes": totals["download_bytes"],
+            "upload_count": totals["upload_count"],
+            "download_count": totals["download_count"],
+            "history": history,
+            "recent": list(recent_transfers),
+        }
+
+
 # ---------------- AUTHENTICATION ----------------
 
 def send_error(client, code, message=""):
@@ -222,6 +294,8 @@ def handle_upload(client, header, username):
     temporary = STORAGE_DIR / f".{uuid.uuid4().hex}.part"
     destination = STORAGE_DIR / filename
 
+    started = time.monotonic()
+
     try:
         # The client waits for this OK before sending file bytes.
         send_frame(client, "OK")
@@ -240,6 +314,7 @@ def handle_upload(client, header, username):
                     digest.update(payload)
                     received += len(payload)
                     chunks += 1
+                    record_bytes("upload", len(payload))
                 elif kind == "UPLOAD_DONE":
                     break
                 else:
@@ -261,6 +336,8 @@ def handle_upload(client, header, username):
 
         send_frame(client, "UPLOAD_OK", filename=filename, size=size,
                    sha256=expected_sha)
+        record_transfer("upload", username, filename, size,
+                        time.monotonic() - started)
         print(f"Upload completed: {filename} ({size} bytes)")
 
     except Exception as error:
@@ -272,7 +349,7 @@ def handle_upload(client, header, username):
         release_filename(filename)
 
 
-def handle_download(client, header):
+def handle_download(client, header, username):
     filename = header.get("filename", "")
 
     if not valid_filename(filename):
@@ -288,6 +365,7 @@ def handle_download(client, header):
 
     size = path.stat().st_size
     digest = sha256_file(path)
+    started = time.monotonic()
 
     send_frame(client, "DOWNLOAD_INIT", filename=filename, size=size,
                sha256=digest)
@@ -299,9 +377,12 @@ def handle_download(client, header):
             if not block:
                 break
             send_frame(client, "CHUNK", block, seq=seq)
+            record_bytes("download", len(block))
             seq += 1
 
     send_frame(client, "DOWNLOAD_DONE", chunks=seq)
+    record_transfer("download", username, filename, size,
+                    time.monotonic() - started)
     print(f"Download completed: {filename}")
 
 
@@ -350,7 +431,7 @@ def handle_client(client, address):
             elif message == "UPLOAD_INIT":
                 handle_upload(client, header, username)
             elif message == "DOWNLOAD_REQ":
-                handle_download(client, header)
+                handle_download(client, header, username)
             else:
                 send_error(client, "UNKNOWN_COMMAND", str(message))
 
