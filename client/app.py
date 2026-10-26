@@ -66,7 +66,7 @@ def login():
     password = request.form.get("password", "")
 
     try:
-        reply = post_to_server("/api/login", {"password": password})
+        reply = post_to_server("/api/login", {"password": password, "name": CLIENT_NAME})
     except OSError as error:
         return page("Cannot reach the server: %s" % error), 502
 
@@ -81,7 +81,7 @@ def login():
 def logout():
     global logged_in, password
     try:
-        post_to_server("/api/logout", {})
+        post_to_server("/api/logout", {"name": CLIENT_NAME})
     except OSError:
         pass
     logged_in = False

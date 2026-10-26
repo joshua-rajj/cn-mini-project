@@ -5,7 +5,14 @@ import urllib.request
 
 from flask import Flask, jsonify, render_template, request
 
-from tcp_server import SERVER_PASSWORD, active_clients, bandwidth_stats, serve
+from tcp_server import (
+    SERVER_PASSWORD,
+    active_clients,
+    add_activity,
+    activity_log,
+    bandwidth_stats,
+    serve,
+)
 
 CONTROLLER = os.environ.get("CONTROLLER_URL", "http://10.0.0.254:8080")
 
@@ -41,6 +48,14 @@ def bandwidth():
     return jsonify(data)
 
 
+@app.route("/api/activity")
+def activity():
+    since = request.args.get("since", 0, type=int)
+    data = activity_log(since)
+    data["ok"] = True
+    return jsonify(data)
+
+
 @app.route("/api/login", methods=["POST"])
 def login():
     data = request.get_json(silent=True) or {}
@@ -53,6 +68,8 @@ def login():
     except OSError as error:
         return jsonify({"ok": False, "error": str(error)}), 502
 
+    name = data.get("name", ip)
+    add_activity(name + " logged in from " + ip)
     print("login from", ip)
     return jsonify({"ok": True, "ip": ip})
 
@@ -65,6 +82,9 @@ def logout():
     except OSError as error:
         return jsonify({"ok": False, "error": str(error)}), 502
 
+    data = request.get_json(silent=True) or {}
+    name = data.get("name", ip)
+    add_activity(name + " logged out from " + ip)
     print("logout from", ip)
     return jsonify({"ok": True, "ip": ip})
 

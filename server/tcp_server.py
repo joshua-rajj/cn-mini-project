@@ -42,6 +42,10 @@ totals = {
     "download_count": 0,
 }
 
+activity_lock = threading.Lock()
+activity = []
+activity_id = 0
+
 
 def start_metadata():
     with metadata_lock:
@@ -178,6 +182,29 @@ def record_transfer(direction, username, filename, size, seconds):
             recent.pop()
 
 
+def add_activity(text):
+    global activity_id
+    with activity_lock:
+        activity_id += 1
+        activity.insert(0, {
+            "id": activity_id,
+            "time": time.strftime("%H:%M:%S"),
+            "text": text,
+        })
+        if len(activity) > 100:
+            activity.pop()
+
+
+def activity_log(since=0):
+    with activity_lock:
+        events = []
+        for event in activity:
+            if event["id"] > since:
+                events.append(event)
+        events.reverse()
+        return {"last": activity_id, "events": events}
+
+
 def bandwidth_stats():
     now = time.time()
     with stats_lock:
@@ -227,6 +254,7 @@ def check_password(sock, address):
     if header.get("password_sha256") != password_hash:
         send_error(sock, "AUTH_FAILED", "wrong password")
         print("wrong password from", address[0])
+        add_activity("login failed from " + address[0])
         return None
 
     username = str(header.get("username", "unknown"))[:100]
@@ -296,12 +324,14 @@ def do_upload(sock, header, username):
 
         send_frame(sock, "UPLOAD_OK", filename=filename, size=size, sha256=sha)
         record_transfer("upload", username, filename, size, time.monotonic() - start)
+        add_activity(username + " uploaded " + filename + " (" + str(size) + " bytes)")
         print("uploaded", filename)
 
     except Exception as error:
         if temp.exists():
             temp.unlink()
         send_error(sock, "UPLOAD_FAILED", str(error))
+        add_activity("upload of " + (filename or "file") + " failed")
         print("upload failed:", error)
 
     finally:
@@ -338,6 +368,7 @@ def do_download(sock, header, username):
 
     send_frame(sock, "DOWNLOAD_DONE", chunks=number)
     record_transfer("download", username, filename, size, time.monotonic() - start)
+    add_activity(username + " downloaded " + filename + " (" + str(size) + " bytes)")
     print("downloaded", filename)
 
 

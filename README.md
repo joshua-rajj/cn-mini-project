@@ -27,7 +27,7 @@ protocol.py                  shared message format
 server/
   tcp_server.py              TCP file server (port 9000)
   app.py                     server dashboard (port 5000)
-  templates/dashboard.html   server page (bandwidth + online clients)
+  templates/dashboard.html   server page (bandwidth + activity + clients)
   storage/                   files that clients can download
   metadata.csv               file list (created at runtime)
 
@@ -104,6 +104,7 @@ Shared state:
 - `buckets` - bytes per second, used for the bandwidth chart.
 - `recent` - the last 20 finished transfers.
 - `totals` - total bytes and transfer counts since the server started.
+- `activity` - the last 100 activity messages (in memory only).
 
 Functions:
 
@@ -131,6 +132,10 @@ Functions:
   `recent` (keeping only 20).
 - `bandwidth_stats()` - returns the 5-second upload/download rates, the totals,
   the last 30 one-second buckets, and the recent transfers.
+- `add_activity(text)` - adds a timestamped event to the in-memory activity
+  list and drops the oldest event after 100.
+- `activity_log(since=0)` - returns `last` (the newest event number) and the
+  events newer than `since`. The dashboard uses this to fetch only new events.
 - `send_error(sock, code, message)` - sends an `ERROR` frame.
 - `check_password(sock, address)` - reads the first frame, which must be `AUTH`.
   It hashes `SERVER_PASSWORD` and compares it with `password_sha256`. On success
@@ -180,9 +185,13 @@ This is the Flask app for the server dashboard.
 - `client_list()` - `GET /api/clients`, returns the output of `active_clients()`.
 - `bandwidth()` - `GET /api/bandwidth`, returns the output of
   `bandwidth_stats()` plus `ok`.
+- `activity()` - `GET /api/activity`, returns `activity_log()` for the optional
+  `since` query parameter.
 - `login()` - `POST /api/login`. It checks the JSON password against
-  `SERVER_PASSWORD`, then grants `request.remote_addr` on the controller.
-- `logout()` - `POST /api/logout`. It revokes `request.remote_addr`.
+  `SERVER_PASSWORD`, then grants `request.remote_addr` on the controller. The
+  JSON body may also include `name` so the event shows the client name.
+- `logout()` - `POST /api/logout`. It revokes `request.remote_addr` and adds a
+  logout event.
 
 At the bottom, it starts `serve()` in a daemon thread and runs Flask on port
 5000.
@@ -301,8 +310,10 @@ Functions and classes:
 
 - `server/templates/dashboard.html` - the server page. It shows the upload and
   download rate cards, a canvas chart of the last 30 seconds, the last 20
-  transfers, and the online clients. It calls `/api/bandwidth` every second and
-  `/api/clients` every three seconds.
+  transfers, the activity feed, and the online clients. It calls
+  `/api/bandwidth` every second, `/api/activity` every two seconds and
+  `/api/clients` every three seconds. The activity table starts empty on every
+  page load, so reloading the page clears it.
 - `client/templates/dashboard.html` - the client page. It has the password
   form, the upload form, and the file list with download links. It calls
   `/api/files` when the page loads and every 10 seconds.
@@ -383,8 +394,9 @@ The management interface `10.0.0.254` is added by the topology so the browser
 can reach these addresses.
 
 The server dashboard shows live upload and download rates, total bytes and
-transfer counts, a 30-second chart, the last 20 transfers and the online
-clients.
+transfer counts, a 30-second chart, the last 20 transfers, a live activity feed
+and the online clients. The activity feed is kept in memory only: it clears
+when the page is reloaded and when the server restarts.
 
 ## Using the dashboards
 
@@ -422,6 +434,8 @@ Use `-j` for parallel transfers:
   write the same name at once.
 - Bandwidth counters live in memory and start again from zero when the server
   restarts.
+- Activity messages also live in memory. The server keeps the last 100, and the
+  dashboard only shows events that arrive after the page was opened.
 - The control API on port 8080 is reachable from inside the Mininet network.
   That is fine for a class project, but in a real system it should be locked
   down.

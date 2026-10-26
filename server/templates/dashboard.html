@@ -67,6 +67,20 @@
     </tbody>
   </table>
 
+  <h2>Activity</h2>
+  <p class="sub">New events since this page was opened.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Time</th>
+        <th>Event</th>
+      </tr>
+    </thead>
+    <tbody id="activity">
+      <tr><td colspan="2" class="empty">No activity yet</td></tr>
+    </tbody>
+  </table>
+
   <h2>Online clients</h2>
   <table>
     <thead>
@@ -213,10 +227,61 @@
       }).join('');
     }
 
+    let lastEvent = null;
+    let activity = [];
+
+    function renderActivity() {
+      const table = document.getElementById('activity');
+
+      if (activity.length === 0) {
+        table.innerHTML = '<tr><td colspan="2" class="empty">No activity yet</td></tr>';
+        return;
+      }
+
+      table.innerHTML = activity.map(function (event) {
+        return '<tr>' +
+          '<td>' + escapeHtml(event.time) + '</td>' +
+          '<td>' + escapeHtml(event.text) + '</td>' +
+          '</tr>';
+      }).join('');
+    }
+
+    async function refreshActivity() {
+      try {
+        let url = '/api/activity';
+        if (lastEvent !== null) {
+          url += '?since=' + lastEvent;
+        }
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (lastEvent === null || data.last < lastEvent) {
+          lastEvent = data.last;
+          activity = [];
+          renderActivity();
+          return;
+        }
+
+        if (data.events.length > 0) {
+          lastEvent = data.last;
+          activity = data.events.reverse().concat(activity);
+          if (activity.length > 50) {
+            activity = activity.slice(0, 50);
+          }
+          renderActivity();
+        }
+      } catch (error) {
+        console.log(error);
+      }
+    }
+
     refreshBandwidth();
     refreshClients();
+    refreshActivity();
     setInterval(refreshBandwidth, 1000);
     setInterval(refreshClients, 3000);
+    setInterval(refreshActivity, 2000);
   </script>
 </body>
 </html>
