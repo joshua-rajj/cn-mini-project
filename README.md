@@ -52,8 +52,6 @@ on top of a small software-defined network. The main objectives are to:
   removes the rules again on logout.
 - **OpenFlow statistics** - the controller polls flow and port counters and the
   server dashboard shows them through the controller's `/stats` API.
-- **In-memory activity** - login, logout, uploads, downloads and SDN events are
-  shown in a feed that clears when the page is reloaded.
 
 ## Project Architecture and Design
 
