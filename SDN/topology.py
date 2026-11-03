@@ -1,6 +1,7 @@
 import os
 import time
 
+from mininet.link import TCLink
 from mininet.log import setLogLevel
 from mininet.net import Mininet
 from mininet.node import RemoteController
@@ -37,7 +38,8 @@ def main():
     client2 = net.addHost("client2", ip="10.0.0.12")
 
     switch = net.addSwitch("s1")
-    for host in (server, client1, client2):
+    net.addLink(server, switch, cls=TCLink, bw=100)
+    for host in (client1, client2):
         net.addLink(host, switch)
 
     mgmt = net.addHost("mgmt", ip="10.0.0.254/24", inNamespace=False)

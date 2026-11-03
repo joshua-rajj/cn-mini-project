@@ -11,6 +11,7 @@ from tcp_server import (
     add_activity,
     activity_log,
     bandwidth_stats,
+    chunk_stats,
     serve,
 )
 
@@ -31,6 +32,11 @@ def controller_call(path, ip):
         return json.loads(response.read())
 
 
+def controller_get(path):
+    with urllib.request.urlopen(CONTROLLER + path, timeout=3) as response:
+        return json.loads(response.read())
+
+
 @app.route("/")
 def home():
     return render_template("dashboard.html")
@@ -43,7 +49,26 @@ def client_list():
 
 @app.route("/api/bandwidth")
 def bandwidth():
-    data = bandwidth_stats()
+    client = request.args.get("client")
+    data = bandwidth_stats(client)
+    data["ok"] = True
+    return jsonify(data)
+
+
+@app.route("/api/chunks")
+def chunks():
+    client = request.args.get("client")
+    data = chunk_stats(client)
+    data["ok"] = True
+    return jsonify(data)
+
+
+@app.route("/api/sdn")
+def sdn():
+    try:
+        data = controller_get("/stats")
+    except (OSError, ValueError) as error:
+        return jsonify({"ok": False, "error": str(error)}), 502
     data["ok"] = True
     return jsonify(data)
 
@@ -93,4 +118,4 @@ if __name__ == "__main__":
     thread = threading.Thread(target=serve)
     thread.daemon = True
     thread.start()
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=5000, threaded=True)

@@ -5,6 +5,7 @@ import threading
 import time
 import urllib.request
 from urllib.error import HTTPError
+from urllib.parse import quote
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, send_file
 
@@ -36,6 +37,15 @@ def post_to_server(path, data):
                                  headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=5) as response:
+            return json.loads(response.read())
+    except HTTPError as error:
+        return json.loads(error.read())
+
+
+def get_from_server(path):
+    url = "http://%s:5000%s" % (SERVER_HOST, path)
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:
             return json.loads(response.read())
     except HTTPError as error:
         return json.loads(error.read())
@@ -107,6 +117,30 @@ def files():
     return jsonify({"ok": True, "files": items})
 
 
+@app.route("/api/bandwidth")
+def bandwidth():
+    if not logged_in:
+        return jsonify({"ok": False, "error": "not logged in"}), 401
+
+    try:
+        data = get_from_server("/api/bandwidth?client=" + quote(CLIENT_NAME))
+    except (OSError, ValueError) as error:
+        return jsonify({"ok": False, "error": str(error)}), 502
+    return jsonify(data)
+
+
+@app.route("/api/chunks")
+def chunks():
+    if not logged_in:
+        return jsonify({"ok": False, "error": "not logged in"}), 401
+
+    try:
+        data = get_from_server("/api/chunks?client=" + quote(CLIENT_NAME))
+    except (OSError, ValueError) as error:
+        return jsonify({"ok": False, "error": str(error)}), 502
+    return jsonify(data)
+
+
 @app.route("/download/<name>")
 def download(name):
     if not logged_in:
@@ -169,4 +203,4 @@ if __name__ == "__main__":
     thread = threading.Thread(target=send_heartbeat)
     thread.daemon = True
     thread.start()
-    app.run(host="0.0.0.0", port=5001)
+    app.run(host="0.0.0.0", port=5001, threaded=True)

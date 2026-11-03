@@ -2,91 +2,947 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Client Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Client Dashboard · {{ client_name }}</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 40px; background: #f4f4f4; color: #222; max-width: 800px; }
-    h1 { margin-bottom: 4px; }
-    h2 { margin-top: 28px; }
-    .sub { color: #666; margin-top: 0; }
-    .box { background: white; padding: 18px; border: 1px solid #ddd; }
-    input[type=password], input[type=file] { padding: 8px; }
-    button { padding: 8px 14px; cursor: pointer; }
-    ul { background: white; padding: 18px 18px 18px 38px; border: 1px solid #ddd; }
-    li { padding: 8px 0; border-bottom: 1px solid #eee; }
-    a { color: #0a5; }
-    .size { color: #777; font-size: 13px; }
-    .error { color: #b00; }
+    :root {
+      --bg: #eef2f7;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #6b7280;
+      --line: #e2e8f0;
+      --accent: #2563eb;
+      --up: #059669;
+      --down: #2563eb;
+      --danger: #dc2626;
+      --radius: 16px;
+      --shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 22px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      box-shadow: var(--shadow);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .logo {
+      width: 46px;
+      height: 46px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, #2563eb, #0891b2);
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      font-size: 15px;
+      flex: 0 0 auto;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 21px;
+      letter-spacing: -0.02em;
+    }
+
+    .brand p {
+      margin: 2px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid var(--line);
+      background: #f8fafc;
+      color: #334155;
+      border-radius: 999px;
+      padding: 6px 11px;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .pill.online { color: #047857; background: #ecfdf5; border-color: #a7f3d0; }
+    .pill.offline { color: #b91c1c; background: #fef2f2; border-color: #fecaca; }
+    .pill.checking { color: #92400e; background: #fffbeb; border-color: #fde68a; }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      display: inline-block;
+      flex: 0 0 auto;
+    }
+
+    .logout-form { margin: 0; }
+
+    .button {
+      border: 0;
+      border-radius: 10px;
+      background: #0f172a;
+      color: white;
+      padding: 9px 15px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .button:hover { background: #1e293b; }
+    .button:disabled { opacity: 0.55; cursor: wait; }
+    .button.ghost { background: #f1f5f9; color: #334155; }
+    .button.ghost:hover { background: #e2e8f0; }
+
+    .tabs {
+      display: flex;
+      gap: 6px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px;
+      margin: 16px 0;
+      box-shadow: var(--shadow);
+      overflow-x: auto;
+      position: sticky;
+      top: 10px;
+      z-index: 5;
+    }
+
+    .tab {
+      border: 0;
+      background: transparent;
+      color: #475569;
+      border-radius: 999px;
+      padding: 9px 17px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .tab:hover { background: #f1f5f9; }
+    .tab.active { background: #0f172a; color: white; }
+
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 18px;
+      box-shadow: var(--shadow);
+      margin-bottom: 16px;
+      min-width: 0;
+    }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .stat {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px 16px;
+      box-shadow: var(--shadow);
+      min-width: 0;
+    }
+
+    .stat span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 24px;
+      letter-spacing: -0.03em;
+      margin: 5px 0 2px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .stat small { color: #8a94a6; font-size: 11px; }
+
+    .section-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 12px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 16px;
+      letter-spacing: -0.01em;
+    }
+
+    .section-head p {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1.1fr;
+      gap: 16px;
+      align-items: start;
+    }
+
+    canvas {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 10px;
+      background: #fbfcfe;
+      border: 1px solid #edf1f7;
+    }
+
+    .legend {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      color: #475569;
+      font-size: 12px;
+      margin-top: 8px;
+    }
+
+    .swatch {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 5px;
+    }
+
+    .table-wrap { overflow-x: auto; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    th {
+      text-align: left;
+      color: #64748b;
+      font-size: 10px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      background: #f8fafc;
+      border-bottom: 1px solid var(--line);
+      padding: 9px 10px;
+      white-space: nowrap;
+    }
+
+    td {
+      border-bottom: 1px solid #edf1f7;
+      padding: 9px 10px;
+      vertical-align: middle;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+
+    .empty {
+      text-align: center;
+      color: #8a94a6;
+      padding: 18px 10px;
+    }
+
+    .muted { color: var(--muted); font-size: 12px; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .badge.online { color: #047857; background: #d1fae5; }
+    .badge.offline { color: #64748b; background: #e2e8f0; }
+    .badge.up { color: #047857; background: #d1fae5; }
+    .badge.down { color: #1d4ed8; background: #dbeafe; }
+    .badge.done { color: #047857; background: #d1fae5; }
+    .badge.failed { color: #b91c1c; background: #fee2e2; }
+
+    .login-shell {
+      min-height: 70vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 0;
+    }
+
+    .login-card {
+      width: 100%;
+      max-width: 430px;
+      padding: 28px;
+      margin: 0;
+    }
+
+    .login-card .logo { margin-bottom: 16px; }
+    .login-card h2 { font-size: 22px; letter-spacing: -0.03em; }
+    .login-card p { color: var(--muted); margin: 5px 0 20px; }
+
+    .field { margin-bottom: 14px; }
+    .field label {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #64748b;
+      margin-bottom: 6px;
+    }
+
+    .field input[type=password],
+    .field input[type=file] {
+      width: 100%;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font: inherit;
+      background: #fbfcfe;
+      color: #0f172a;
+    }
+
+    .field input[type=password]:focus,
+    .field input[type=file]:focus {
+      outline: 2px solid #bfdbfe;
+      border-color: #60a5fa;
+    }
+
+    .notice {
+      border: 1px solid #fecaca;
+      background: #fef2f2;
+      color: #991b1b;
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 16px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .upload-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .upload-row input[type=file] {
+      flex: 1 1 220px;
+      width: auto;
+      border: 1px dashed #cbd5e1;
+      border-radius: 10px;
+      padding: 9px 11px;
+      background: #fbfcfe;
+    }
+
+    .file-name { font-weight: 700; word-break: break-all; }
+    .file-size { color: var(--muted); font-size: 11px; }
+
+    .download-link {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid #bfdbfe;
+      background: #eff6ff;
+      color: #1d4ed8;
+      border-radius: 9px;
+      padding: 6px 11px;
+      font-size: 11px;
+      font-weight: 700;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .download-link:hover { background: #dbeafe; }
+
+    .transfer-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+    }
+
+    .transfer {
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      padding: 13px;
+      background: #fbfcfe;
+    }
+
+    .transfer.done { background: #f8fafc; }
+
+    .transfer-head {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+
+    .transfer-head strong { font-size: 13px; }
+    .transfer-file { color: #334155; font-size: 12px; font-weight: 600; word-break: break-all; }
+
+    .progress {
+      height: 11px;
+      background: #e8edf5;
+      border-radius: 999px;
+      overflow: hidden;
+      margin: 8px 0 7px;
+    }
+
+    .progress .bar {
+      height: 100%;
+      border-radius: 999px;
+      transition: width 300ms linear;
+    }
+
+    .progress .bar.up { background: var(--up); }
+    .progress .bar.down { background: var(--down); }
+    .progress .bar.bad { background: var(--danger); }
+
+    .transfer-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      color: #64748b;
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .flow {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 2px 7px;
+      font-size: 10px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .flow.up { color: #047857; background: #d1fae5; }
+    .flow.down { color: #1d4ed8; background: #dbeafe; }
+
+    .foot {
+      text-align: center;
+      color: #94a3b8;
+      font-size: 11px;
+      padding: 8px 0 18px;
+    }
+
+    @media (max-width: 900px) {
+      .two-col { grid-template-columns: 1fr; }
+      .topbar { align-items: flex-start; flex-direction: column; }
+      .status-row { justify-content: flex-start; }
+      .page { padding: 14px; }
+    }
   </style>
 </head>
 <body>
-  <h1>Client Dashboard</h1>
-  <p class="sub">{{ client_name }} ({{ client_id }}) &middot; server {{ server_host }}:{{ server_port }}</p>
+  <div class="page">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">CN</div>
+        <div>
+          <h1>Client Dashboard</h1>
+          <p><strong>{{ client_name }}</strong> ({{ client_id }}) · server {{ server_host }}:{{ server_port }}</p>
+        </div>
+      </div>
+      <div class="status-row">
+        {% if logged_in %}
+          <span class="pill online" id="my-state"><span class="dot"></span> Connected</span>
+          <form class="logout-form" method="post" action="/logout">
+            <button class="button ghost" type="submit">Log out</button>
+          </form>
+        {% else %}
+          <span class="pill checking"><span class="dot"></span> Not logged in</span>
+        {% endif %}
+      </div>
+    </header>
 
-  {% if error %}
-    <p class="error">{{ error }}</p>
-  {% endif %}
+    {% if error %}
+      <div class="notice" style="margin-top:16px">{{ error }}</div>
+    {% endif %}
 
-  {% if not logged_in %}
+    {% if not logged_in %}
+      <div class="login-shell">
+        <div class="card login-card">
+          <div class="logo">CN</div>
+          <h2>Sign in to the file server</h2>
+          <p>Enter the server password to join the network and start transferring files.</p>
+          <form method="post" action="/login">
+            <div class="field">
+              <label for="password">Server password</label>
+              <input id="password" type="password" name="password" autocomplete="current-password" required autofocus>
+            </div>
+            <button class="button" type="submit" style="width:100%">Connect</button>
+          </form>
+        </div>
+      </div>
+    {% else %}
+      <nav class="tabs">
+        <button class="tab active" data-tab="overview">Overview</button>
+        <button class="tab" data-tab="bandwidth">My bandwidth</button>
+        <button class="tab" data-tab="chunks">My chunks</button>
+      </nav>
 
-    <h2>Login</h2>
-    <div class="box">
-      <form method="post" action="/login">
-        <input type="password" name="password" placeholder="Password" required>
-        <button type="submit">Log in</button>
-      </form>
-    </div>
+      <main>
+        <section class="panel active" id="tab-overview">
+          <div class="stat-grid">
+            <div class="stat"><span>Upload now</span><strong id="my-up-rate">0 bps</strong><small id="my-up-count">0 uploads</small></div>
+            <div class="stat"><span>Download now</span><strong id="my-down-rate">0 bps</strong><small id="my-down-count">0 downloads</small></div>
+            <div class="stat"><span>Uploaded</span><strong id="my-up-bytes">0 B</strong><small>total sent</small></div>
+            <div class="stat"><span>Downloaded</span><strong id="my-down-bytes">0 B</strong><small>total received</small></div>
+          </div>
 
-  {% else %}
+          <div class="two-col">
+            <div class="card">
+              <div class="section-head">
+                <div>
+                  <h2>Upload a file</h2>
+                  <p>Any file type · videos, images, archives and text</p>
+                </div>
+              </div>
+              <form id="upload-form" method="post" action="/upload" enctype="multipart/form-data">
+                <div class="upload-row">
+                  <input id="file-input" type="file" name="file" required>
+                  <button class="button" id="upload-button" type="submit">Upload</button>
+                </div>
+                <p class="muted" id="upload-status" style="margin:10px 0 0">The file is stored on the server and appears in the list.</p>
+              </form>
+            </div>
 
-    <p class="box">
-      Logged in as <strong>{{ client_name }}</strong>.
-      <form method="post" action="/logout" style="display:inline">
-        <button type="submit">Log out</button>
-      </form>
-    </p>
+            <div class="card">
+              <div class="section-head">
+                <div>
+                  <h2>Files on the server</h2>
+                  <p>Download through this client · refreshed every 10 seconds</p>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>File</th><th>Size</th><th>Owner</th><th>Uploaded</th><th></th></tr>
+                  </thead>
+                  <tbody id="file-list"><tr><td colspan="5" class="empty">Loading files</td></tr></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
 
-    <h2>Upload a file</h2>
-    <div class="box">
-      <form method="post" action="/upload" enctype="multipart/form-data">
-        <input type="file" name="file" required>
-        <button type="submit">Upload</button>
-      </form>
-    </div>
+        <section class="panel" id="tab-bandwidth">
+          <div class="card">
+            <div class="section-head">
+              <div>
+                <h2>My bandwidth</h2>
+                <p>Upload and download for {{ client_name }} over the last 30 seconds</p>
+              </div>
+              <div class="legend">
+                <span><i class="swatch" style="background:#059669"></i>Upload</span>
+                <span><i class="swatch" style="background:#2563eb"></i>Download</span>
+              </div>
+            </div>
+            <canvas id="my-chart" width="1050" height="250"></canvas>
+          </div>
 
-    <h2>Files on the server</h2>
-    <ul id="files"><li>Loading...</li></ul>
+          <div class="card">
+            <div class="section-head">
+              <div>
+                <h2>My recent transfers</h2>
+                <p>Newest first · measured by the server</p>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Time</th><th>File</th><th>Type</th><th>Size</th><th>Speed</th></tr>
+                </thead>
+                <tbody id="my-recent"><tr><td colspan="5" class="empty">No transfers yet</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
 
-    <script>
-      async function refresh() {
-        const list = document.getElementById('files');
-        try {
-          const response = await fetch('/api/files');
-          const data = await response.json();
-          if (!data.ok) {
-            throw new Error(data.error);
+        <section class="panel" id="tab-chunks">
+          <div class="card">
+            <div class="section-head">
+              <div>
+                <h2>My active transfers</h2>
+                <p>64 KiB chunks · the server reports progress for {{ client_name }}</p>
+              </div>
+              <span class="pill" id="my-transfers-count">0 active</span>
+            </div>
+            <div id="my-transfers" class="transfer-grid"><div class="empty">No active transfers. Upload or download a file to watch chunks.</div></div>
+          </div>
+
+          <div class="card">
+            <div class="section-head">
+              <div>
+                <h2>My chunk stream</h2>
+                <p>Chunks sent to the server and received from the server</p>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Time</th><th>Flow</th><th>File</th><th>Chunk</th><th>Size</th></tr>
+                </thead>
+                <tbody id="my-chunks"><tr><td colspan="5" class="empty">No chunks yet</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <div class="foot">Chunks are 64 KiB · bandwidth and chunk history are kept in memory</div>
+
+      <script>
+        const state = { bandwidth: null };
+
+        function formatBytes(bytes) {
+          if (bytes < 1024) return Math.round(bytes) + ' B';
+          if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KiB';
+          if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MiB';
+          return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GiB';
+        }
+
+        function formatRate(bytes) {
+          const bits = bytes * 8;
+          if (bits >= 1000000000) return (bits / 1000000000).toFixed(2) + ' Gbps';
+          if (bits >= 1000000) return (bits / 1000000).toFixed(2) + ' Mbps';
+          if (bits >= 1000) return (bits / 1000).toFixed(1) + ' Kbps';
+          return Math.round(bits) + ' bps';
+        }
+
+        function escapeHtml(text) {
+          return String(text).replace(/[&<>"']/g, function (ch) {
+            return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch];
+          });
+        }
+
+        const chartBox = { left: 96, right: 16, top: 16, bottom: 28 };
+
+        function drawChart(series) {
+          const canvas = document.getElementById('my-chart');
+          if (!canvas) return;
+          const ctx = canvas.getContext('2d');
+          const width = canvas.width;
+          const height = canvas.height;
+          const plotWidth = width - chartBox.left - chartBox.right;
+          const plotHeight = height - chartBox.top - chartBox.bottom;
+          let peak = 1;
+
+          series.forEach(function (item) {
+            item.values.forEach(function (value) {
+              peak = Math.max(peak, value);
+            });
+          });
+
+          ctx.clearRect(0, 0, width, height);
+          ctx.font = '12px system-ui, -apple-system, Segoe UI, Arial, sans-serif';
+          ctx.textBaseline = 'middle';
+
+          for (let i = 0; i <= 4; i++) {
+            const y = chartBox.top + plotHeight * i / 4;
+            ctx.strokeStyle = '#e8edf5';
+            ctx.beginPath();
+            ctx.moveTo(chartBox.left, y);
+            ctx.lineTo(width - chartBox.right, y);
+            ctx.stroke();
+            ctx.fillStyle = '#8a94a6';
+            ctx.textAlign = 'right';
+            ctx.fillText(formatRate(peak * (1 - i / 4)), chartBox.left - 10, y);
           }
 
-          if (data.files.length === 0) {
-            list.innerHTML = '<li>No files on the server.</li>';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'top';
+          ['-30s', '-20s', '-10s', 'now'].forEach(function (label, index) {
+            const x = chartBox.left + plotWidth * index / 3;
+            ctx.fillStyle = '#8a94a6';
+            ctx.fillText(label, x, height - chartBox.bottom + 8);
+          });
+
+          series.forEach(function (item) {
+            ctx.strokeStyle = item.colour;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            item.values.forEach(function (value, index) {
+              const x = chartBox.left + plotWidth * index / Math.max(1, item.values.length - 1);
+              const y = chartBox.top + plotHeight * (1 - value / peak);
+              if (index === 0) ctx.moveTo(x, y);
+              else ctx.lineTo(x, y);
+            });
+            ctx.stroke();
+          });
+        }
+
+        function setState(online, text) {
+          const pill = document.getElementById('my-state');
+          if (!pill) return;
+          pill.className = 'pill ' + (online ? 'online' : 'offline');
+          pill.innerHTML = '<span class="dot"></span> ' + text;
+        }
+
+        function renderRecent(recent) {
+          const table = document.getElementById('my-recent');
+          if (recent.length === 0) {
+            table.innerHTML = '<tr><td colspan="5" class="empty">No transfers yet</td></tr>';
             return;
           }
 
-          list.innerHTML = data.files.map(function (file) {
-            return '<li>' +
-              '<a href="/download/' + encodeURIComponent(file.filename) + '">' + file.filename + '</a>' +
-              ' <span class="size">(' + file.size + ' bytes, ' + file.owner + ', ' + file.upload_time + ')</span>' +
-              '</li>';
+          table.innerHTML = recent.map(function (transfer) {
+            return '<tr>' +
+              '<td>' + escapeHtml(transfer.time) + '</td>' +
+              '<td>' + escapeHtml(transfer.filename) + '</td>' +
+              '<td><span class="badge ' + (transfer.direction === 'upload' ? 'up' : 'down') + '">' + transfer.direction + '</span></td>' +
+              '<td>' + formatBytes(transfer.bytes) + '</td>' +
+              '<td>' + transfer.mbps.toFixed(2) + ' Mbps</td>' +
+              '</tr>';
           }).join('');
-        } catch (error) {
-          list.innerHTML = '<li class="error">Could not reach the server: ' +
-            error.message + '</li>';
         }
-      }
 
-      refresh();
-      setInterval(refresh, 10000);
-    </script>
+        async function refreshBandwidth() {
+          try {
+            const response = await fetch('/api/bandwidth');
+            const data = await response.json();
+            if (!data.ok) {
+              throw new Error(data.error || 'server unavailable');
+            }
 
-  {% endif %}
+            state.bandwidth = data;
+            setState(data.online, data.online ? 'Connected' : 'Server unreachable');
+
+            document.getElementById('my-up-rate').textContent = formatRate(data.upload_rate);
+            document.getElementById('my-down-rate').textContent = formatRate(data.download_rate);
+            document.getElementById('my-up-bytes').textContent = formatBytes(data.upload_bytes);
+            document.getElementById('my-down-bytes').textContent = formatBytes(data.download_bytes);
+            document.getElementById('my-up-count').textContent = data.upload_count + ' uploads';
+            document.getElementById('my-down-count').textContent = data.download_count + ' downloads';
+
+            drawChart([
+              { values: data.history.map(function (point) { return point.upload; }), colour: '#059669' },
+              { values: data.history.map(function (point) { return point.download; }), colour: '#2563eb' }
+            ]);
+            renderRecent(data.recent.slice(0, 10));
+          } catch (error) {
+            setState(false, 'Server unreachable');
+          }
+        }
+
+        function renderTransfers(transfers) {
+          const box = document.getElementById('my-transfers');
+          const active = transfers.filter(function (transfer) { return !transfer.done; });
+          const finished = transfers.filter(function (transfer) { return transfer.done; }).slice(0, 3);
+          document.getElementById('my-transfers-count').textContent = active.length + ' active';
+
+          if (active.length === 0 && finished.length === 0) {
+            box.innerHTML = '<div class="empty">No active transfers. Upload or download a file to watch chunks.</div>';
+            return;
+          }
+
+          box.innerHTML = active.concat(finished).map(function (transfer) {
+            const percent = transfer.total_chunks > 0
+              ? Math.min(100, transfer.chunks / transfer.total_chunks * 100)
+              : 0;
+            const barClass = transfer.done && !transfer.ok ? 'bad' : (transfer.direction === 'upload' ? 'up' : 'down');
+            const flow = transfer.direction === 'upload' ? 'client → server' : 'server → client';
+            const status = transfer.done
+              ? (transfer.ok ? '<span class="badge done">completed</span>' : '<span class="badge failed">failed</span>')
+              : '<span class="badge ' + (transfer.direction === 'upload' ? 'up' : 'down') + '">live</span>';
+
+            return '<div class="transfer ' + (transfer.done ? 'done' : '') + '">' +
+              '<div class="transfer-head"><strong>' + escapeHtml(transfer.client) + '</strong>' + status +
+                '<span class="transfer-file">' + escapeHtml(transfer.filename) + '</span></div>' +
+              '<div class="progress"><div class="bar ' + barClass + '" style="width:' + percent + '%"></div></div>' +
+              '<div class="transfer-meta"><span>chunk ' + transfer.chunks.toLocaleString() + ' / ' + transfer.total_chunks.toLocaleString() + '</span>' +
+                '<span>' + formatBytes(transfer.bytes) + ' / ' + formatBytes(transfer.size) + '</span>' +
+                '<span>' + percent.toFixed(0) + '%</span></div>' +
+              '<div class="transfer-meta"><span>' + flow + '</span><span>' + (transfer.done ? (transfer.ok ? 'done' : 'failed') : 'live') + '</span></div>' +
+              '</div>';
+          }).join('');
+        }
+
+        function renderChunks(events) {
+          const table = document.getElementById('my-chunks');
+          if (events.length === 0) {
+            table.innerHTML = '<tr><td colspan="5" class="empty">No chunks yet</td></tr>';
+            return;
+          }
+
+          table.innerHTML = events.slice(0, 40).map(function (event) {
+            return '<tr>' +
+              '<td>' + escapeHtml(event.time) + '</td>' +
+              '<td><span class="flow ' + (event.direction === 'upload' ? 'up' : 'down') + '">' +
+                (event.direction === 'upload' ? 'client → server' : 'server → client') + '</span></td>' +
+              '<td>' + escapeHtml(event.filename) + '</td>' +
+              '<td>#' + event.chunk.toLocaleString() + '</td>' +
+              '<td>' + formatBytes(event.size) + '</td>' +
+              '</tr>';
+          }).join('');
+        }
+
+        async function refreshChunks() {
+          try {
+            const response = await fetch('/api/chunks');
+            const data = await response.json();
+            if (!data.ok) {
+              throw new Error(data.error || 'server unavailable');
+            }
+            renderTransfers(data.transfers);
+            renderChunks(data.events);
+          } catch (error) {
+            console.log(error);
+          }
+        }
+
+        async function refreshFiles() {
+          const table = document.getElementById('file-list');
+          try {
+            const response = await fetch('/api/files');
+            const data = await response.json();
+            if (!data.ok) {
+              throw new Error(data.error || 'cannot list files');
+            }
+
+            if (data.files.length === 0) {
+              table.innerHTML = '<tr><td colspan="5" class="empty">No files on the server</td></tr>';
+              return;
+            }
+
+            table.innerHTML = data.files.map(function (file) {
+              const rawSize = file.size !== undefined ? file.size : file.size_bytes;
+              const size = parseInt(rawSize, 10) || 0;
+              const uploaded = String(file.upload_time || file.uploaded_at || '').replace('T', ' ').slice(0, 19);
+              const link = '/download/' + encodeURIComponent(file.filename);
+              return '<tr>' +
+                '<td><div class="file-name">' + escapeHtml(file.filename) + '</div></td>' +
+                '<td><div class="file-size">' + formatBytes(size) + '</div></td>' +
+                '<td>' + escapeHtml(file.owner) + '</td>' +
+                '<td>' + escapeHtml(uploaded) + '</td>' +
+                '<td><a class="download-link" href="' + link + '">Download</a></td>' +
+                '</tr>';
+            }).join('');
+          } catch (error) {
+            table.innerHTML = '<tr><td colspan="5" class="empty">Cannot load files: ' + escapeHtml(error.message) + '</td></tr>';
+          }
+        }
+
+        function showTab(name) {
+          const panels = document.querySelectorAll('.panel');
+          const tabs = document.querySelectorAll('.tab');
+          let found = false;
+
+          panels.forEach(function (panel) {
+            if (panel.id === 'tab-' + name) {
+              panel.classList.add('active');
+              found = true;
+            } else {
+              panel.classList.remove('active');
+            }
+          });
+
+          if (!found) {
+            showTab('overview');
+            return;
+          }
+
+          tabs.forEach(function (tab) {
+            tab.classList.toggle('active', tab.dataset.tab === name);
+          });
+
+          if (location.hash !== '#' + name) {
+            location.hash = name;
+          }
+        }
+
+        document.querySelectorAll('.tab').forEach(function (tab) {
+          tab.addEventListener('click', function () {
+            showTab(tab.dataset.tab);
+          });
+        });
+
+        window.addEventListener('hashchange', function () {
+          showTab(location.hash.replace('#', '') || 'overview');
+        });
+
+        document.getElementById('upload-form').addEventListener('submit', function () {
+          document.getElementById('upload-status').textContent = 'Uploading… keep this tab open.';
+          document.getElementById('upload-button').disabled = true;
+        });
+
+        showTab(location.hash.replace('#', '') || 'overview');
+        refreshFiles();
+        refreshBandwidth();
+        refreshChunks();
+        setInterval(refreshFiles, 10000);
+        setInterval(refreshBandwidth, 1000);
+        setInterval(refreshChunks, 1000);
+      </script>
+    {% endif %}
+  </div>
 </body>
 </html>

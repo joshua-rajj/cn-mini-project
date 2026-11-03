@@ -1,11 +1,13 @@
 import json
 import os
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from ryu.base import app_manager
 from ryu.controller import ofp_event
-from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cls
+from ryu.controller.handler import CONFIG_DISPATCHER, DEAD_DISPATCHER, MAIN_DISPATCHER, set_ev_cls
+from ryu.lib import hub
 from ryu.lib.packet import ethernet, ipv4, packet, tcp
 from ryu.ofproto import ofproto_v1_3
 
@@ -22,6 +24,14 @@ datapaths = {}
 mac_table = {}
 allowed = set()
 blocked = 0
+
+stats_lock = threading.Lock()
+flows = {}
+ports = {}
+packet_in_count = 0
+grant_count = 0
+revoke_count = 0
+started_at = time.time()
 
 
 def add_flow(dp, priority, match, actions):
@@ -91,6 +101,65 @@ def remove_client(dp, ip):
         dp.send_msg(message)
 
 
+def match_text(match):
+    if not match:
+        return "any"
+    parts = []
+    for key, value in sorted(match.items()):
+        parts.append(str(key) + "=" + str(value))
+    if not parts:
+        return "any"
+    return ", ".join(parts)
+
+
+def switch_name(dp_id):
+    if dp_id < 1000:
+        return "s" + str(dp_id)
+    return "0x" + format(dp_id, "x")
+
+
+def build_stats():
+    with stats_lock:
+        flow_list = []
+        for dp_id, entries in flows.items():
+            for entry in entries:
+                item = dict(entry)
+                item["switch"] = switch_name(dp_id)
+                flow_list.append(item)
+        flow_list.sort(key=lambda item: item["bytes"], reverse=True)
+
+        port_list = []
+        for dp_id, entries in ports.items():
+            for entry in entries:
+                item = dict(entry)
+                item["switch"] = switch_name(dp_id)
+                port_list.append(item)
+        port_list.sort(key=lambda item: (item["switch"], item["port"]))
+
+        switch_list = []
+        for dp_id in list(datapaths):
+            switch_list.append({
+                "id": switch_name(dp_id),
+                "flows": len(flows.get(dp_id, [])),
+                "ports": len(ports.get(dp_id, [])),
+            })
+        switch_list.sort(key=lambda item: item["id"])
+
+        return {
+            "ok": True,
+            "switches": switch_list,
+            "flows": flow_list[:30],
+            "ports": port_list,
+            "allowed": sorted(allowed),
+            "blocked": blocked,
+            "packet_in": packet_in_count,
+            "grants": grant_count,
+            "revokes": revoke_count,
+            "macs": sum(len(table) for table in list(mac_table.values())),
+            "uptime": int(time.time() - started_at),
+        }
+
+
 class ControlHandler(BaseHTTPRequestHandler):
     def reply(self, data, status=200):
         body = json.dumps(data).encode()
@@ -103,10 +172,13 @@ class ControlHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/state":
             self.reply({"allowed": sorted(allowed), "blocked": blocked})
+        elif self.path == "/stats":
+            self.reply(build_stats())
         else:
             self.reply({"ok": False, "error": "unknown path"}, 404)
 
     def do_POST(self):
+        global grant_count, revoke_count
         length = int(self.headers.get("Content-Length") or 0)
         data = json.loads(self.rfile.read(length) or b"{}")
         ip = data.get("ip")
@@ -115,14 +187,18 @@ class ControlHandler(BaseHTTPRequestHandler):
             self.reply({"ok": False, "error": "missing ip"}, 400)
         elif self.path == "/grant":
             allowed.add(ip)
-            for dp in datapaths.values():
+            for dp in list(datapaths.values()):
                 allow_client(dp, ip)
+            with stats_lock:
+                grant_count += 1
             print("granted", ip, flush=True)
             self.reply({"ok": True, "granted": ip})
         elif self.path == "/revoke":
             allowed.discard(ip)
-            for dp in datapaths.values():
+            for dp in list(datapaths.values()):
                 remove_client(dp, ip)
+            with stats_lock:
+                revoke_count += 1
             print("revoked", ip, flush=True)
             self.reply({"ok": True, "revoked": ip})
         else:
@@ -142,6 +218,7 @@ class Firewall(app_manager.RyuApp):
         thread.daemon = True
         thread.start()
         print("control API on port", REST_PORT, flush=True)
+        hub.spawn(self.poll_stats)
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_connected(self, ev):
@@ -173,15 +250,33 @@ class Firewall(app_manager.RyuApp):
         for ip in allowed:
             allow_client(dp, ip)
 
+        with stats_lock:
+            flows[dp.id] = []
+            ports[dp.id] = []
+        self.request_stats(dp)
+
         print("switch", dp.id, "connected", flush=True)
+
+    @set_ev_cls(ofp_event.EventOFPStateChange, [MAIN_DISPATCHER, DEAD_DISPATCHER])
+    def state_change(self, ev):
+        dp = ev.datapath
+        if ev.state == DEAD_DISPATCHER:
+            datapaths.pop(dp.id, None)
+            with stats_lock:
+                flows.pop(dp.id, None)
+                ports.pop(dp.id, None)
+            print("switch", dp.id, "disconnected", flush=True)
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in(self, ev):
-        global blocked
+        global blocked, packet_in_count
 
         msg = ev.msg
         dp = msg.datapath
         in_port = msg.match["in_port"]
+
+        with stats_lock:
+            packet_in_count += 1
 
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocol(ethernet.ethernet)
@@ -199,7 +294,8 @@ class Firewall(app_manager.RyuApp):
                 out_port = mac_table[dp.id].get(eth.dst, dp.ofproto.OFPP_FLOOD)
                 self.send_out(dp, msg, in_port, out_port)
             else:
-                blocked += 1
+                with stats_lock:
+                    blocked += 1
                 print("blocked", ip_pkt.src, "to", SERVER_IP, TRANSFER_PORT, flush=True)
             return
 
@@ -216,6 +312,70 @@ class Firewall(app_manager.RyuApp):
             add_flow(dp, LEARNED, match, [parser.OFPActionOutput(out_port)])
 
         self.send_out(dp, msg, in_port, out_port)
+
+    @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
+    def flow_stats_reply(self, ev):
+        dp = ev.msg.datapath
+        entries = []
+        for stat in ev.msg.body:
+            entries.append({
+                "priority": stat.priority,
+                "match": match_text(stat.match),
+                "packets": stat.packet_count,
+                "bytes": stat.byte_count,
+                "duration": stat.duration_sec,
+            })
+        entries.sort(key=lambda item: item["bytes"], reverse=True)
+        with stats_lock:
+            flows[dp.id] = entries[:30]
+
+    @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
+    def port_stats_reply(self, ev):
+        dp = ev.msg.datapath
+        entries = []
+        for stat in ev.msg.body:
+            entries.append({
+                "port": stat.port_no,
+                "rx_packets": stat.rx_packets,
+                "tx_packets": stat.tx_packets,
+                "rx_bytes": stat.rx_bytes,
+                "tx_bytes": stat.tx_bytes,
+                "rx_errors": stat.rx_errors,
+                "tx_errors": stat.tx_errors,
+                "rx_dropped": stat.rx_dropped,
+                "tx_dropped": stat.tx_dropped,
+            })
+        entries.sort(key=lambda item: item["port"])
+        with stats_lock:
+            ports[dp.id] = entries
+
+    def poll_stats(self):
+        while True:
+            hub.sleep(2)
+            for dp in list(datapaths.values()):
+                self.request_stats(dp)
+
+    def request_stats(self, dp):
+        parser = dp.ofproto_parser
+        ofproto = dp.ofproto
+        try:
+            dp.send_msg(parser.OFPFlowStatsRequest(
+                datapath=dp,
+                flags=0,
+                table_id=ofproto.OFPTT_ALL,
+                out_port=ofproto.OFPP_ANY,
+                out_group=ofproto.OFPG_ANY,
+                cookie=0,
+                cookie_mask=0,
+                match=parser.OFPMatch(),
+            ))
+            dp.send_msg(parser.OFPPortStatsRequest(
+                datapath=dp,
+                flags=0,
+                port_no=ofproto.OFPP_ANY,
+            ))
+        except Exception as error:
+            print("stats request failed:", error, flush=True)
 
     def send_out(self, dp, msg, in_port, out_port):
         parser = dp.ofproto_parser

@@ -22,3 +22,15 @@ client/downloads/*.txt
 
 # secrets / local config
 .env
+
+# large demo media
+server/storage/*.mov
+server/storage/*.mp4
+server/storage/*.webm
+server/storage/*.mkv
+server/storage/*.avi
+client/downloads/*.mov
+client/downloads/*.mp4
+client/downloads/*.webm
+client/downloads/*.mkv
+client/downloads/*.avi
