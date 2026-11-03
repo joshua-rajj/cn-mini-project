@@ -5,7 +5,11 @@ clients over TCP in a simulated Mininet network. A Ryu SDN controller controls
 who can access the server, while live dashboards show per-client bandwidth,
 chunk progress, and OpenFlow statistics.
 
-[![Watch the demo video](docs/video-thumbnail.png)](https://cdn.jsdelivr.net/gh/joshua-rajj/cn-mini-project@main/docs/video.mp4)
+
+
+https://github.com/user-attachments/assets/632f4aa7-2199-4d2a-b3bf-591dd5835e45
+
+
 
 ## Objectives
 
