@@ -76,38 +76,6 @@ downloads share that link, which makes bandwidth contention visible in the
 per-client meters. The controller connects to the switch over OpenFlow on port
 6653 and exposes a small control/stats API on port 8080.
 
-### Components
-
-| Component | Location | Responsibility |
-| --- | --- | --- |
-| Shared protocol | `protocol.py` | Framed JSON and binary messages used by both sides |
-| File server | `server/tcp_server.py` | Authentication, file operations, metadata, concurrency, telemetry |
-| Server dashboard | `server/app.py`, `server/templates/dashboard.html` | JSON APIs, controller proxy and the server UI |
-| Transfer client | `client/client.py` | TCP login, listing, upload, download, hashing and CLI |
-| Client dashboard | `client/app.py`, `client/templates/dashboard.html` | Login, heartbeat, upload/download forms and per-client views |
-| SDN controller | `SDN/controller.py` | Learning switch, OpenFlow gate, control API and stats |
-| Network | `SDN/topology.py` | Mininet hosts, switch, links and application startup |
-| Runtime data | `server/storage`, `server/metadata.csv` | Shared files and persistent file metadata |
-
-### Request and data flow
-
-1. A client opens its dashboard and submits the server password.
-2. The client app calls the server's `POST /api/login`. The server checks the
-   password and asks the Ryu controller to grant the client's IP.
-3. The controller installs two OpenFlow rules: one for the client-to-server
-   direction on TCP port 9000 and one for the return direction.
-4. The client logs in to the TCP server with a username and password. The
-   server returns an authentication token.
-5. The client lists files, uploads a file or downloads a file over the framed
-   TCP protocol.
-6. The server records bytes, rates, transfer history and chunk events as the
-   transfer runs. The dashboards poll the JSON APIs to update their views.
-7. The controller polls flow and port counters. The server dashboard fetches
-   them from the controller's `/stats` endpoint and displays them on the SDN
-   tab.
-8. On logout, the client app asks the server to revoke access, and the
-   controller deletes the client's OpenFlow rules.
-
 ### Design decisions
 
 - **Framed protocol.** Every message has a fixed magic value, a header length,
@@ -131,36 +99,6 @@ per-client meters. The controller connects to the switch over OpenFlow on port
 - **SDN enforcement at the edge.** The controller does not inspect file
   contents. It simply allows or blocks the TCP service port for each client IP,
   which keeps the gate small and easy to demonstrate.
-
-### Repository layout
-
-```
-protocol.py                  shared message format
-
-server/
-  tcp_server.py              TCP file server (port 9000)
-  app.py                     server dashboard and JSON APIs (port 5000)
-  templates/dashboard.html   server page (overview, clients, chunks, SDN, activity)
-  storage/                   files that clients can download
-  metadata.csv               file list (created at runtime)
-
-client/
-  client.py                  transfer client and command line
-  app.py                     client dashboard and proxies (port 5001)
-  templates/dashboard.html   client page (login, upload, own bandwidth and chunks)
-  downloads/                 downloaded files
-
-SDN/
-  controller.py              Ryu controller, control API and stats API
-  topology.py                Mininet network
-
-docs/
-  demo.gif                   animated walkthrough of the dashboards
-  screenshots/               screenshots used in this README
-
-requirements.txt             Flask (application)
-requirements-controller.txt  Ryu (controller, Python 3.8)
-```
 
 ## Contributions
 
@@ -381,71 +319,3 @@ and `client2` sees `client2`.
 
 The client is online while its heartbeat can reach the server, which means it
 is logged in.
-
-## Watching two clients compete
-
-1. Open the server dashboard on the **Overview** or **Clients** tab.
-2. On client1, download the large video from the file list.
-3. While that download is running, download a small file on client2.
-4. Watch the per-client meters and the per-client trend chart. The large
-   transfer uses most of the link, so client1's meter is high and client2's
-   meter is much lower. The share percentage under each meter makes the
-   contention visible.
-
-The chunk tab shows the same transfers as chunks: chunk 1, every 50th chunk and
-the final chunk. Each row says which client sent or received it and in which
-direction.
-
-## Large video demo
-
-`server/storage/big_buck_bunny_720p.mov` is a 398 MiB Big Buck Bunny video
-(416,751,190 bytes) used to demonstrate a large download and bandwidth
-contention. Its metadata row is in `server/metadata.csv`, so it appears in the
-file list like any other file. `server/storage/small_demo.bin` is a 5 MiB local
-test file used as the small download in the contention demo.
-
-The video is local demo data and is not committed to Git. The `.gitignore` file
-ignores `.mov`, `.mp4`, `.webm`, `.mkv` and `.avi` files in `server/storage` and
-`client/downloads`. If you clone the project, add any video or image to
-`server/storage` and add its metadata row, or upload it from a client dashboard.
-
-## Command line client
-
-Run it from inside a Mininet host, or from the management interface after
-granting its IP:
-
-```bash
-.venv/bin/python client/client.py --host 10.0.0.1 -u alice -p pass123 ls
-.venv/bin/python client/client.py --host 10.0.0.1 -u alice -p pass123 put file.bin
-.venv/bin/python client/client.py --host 10.0.0.1 -u alice -p pass123 get file.bin
-```
-
-Use `-j` for parallel transfers:
-
-```bash
-.venv/bin/python client/client.py --host 10.0.0.1 -u alice -p pass123 -j 4 put a.bin b.bin c.bin
-```
-
-## Notes
-
-- Uploads are written to a `.part` file first and renamed when complete.
-- The server checks the SHA-256 before publishing an upload, and the client
-  checks the size and SHA-256 after a download.
-- A filename is reserved while it is being uploaded, so two clients cannot
-  write the same name at once.
-- Files are transferred as raw bytes in 64 KiB chunks. There is no extension
-  filter, so videos, images, PDFs, archives and text files all work.
-- Bandwidth counters, per-client meters, recent transfers and chunk events live
-  in memory and start again from zero when the server restarts.
-- The per-client meters are keyed by the username used for the TCP login. The
-  client dashboard always uses its `CLIENT_NAME`.
-- The visible chunk stream samples chunk 1, every 50th chunk and the final
-  chunk. Progress cards count every chunk.
-- Activity messages also live in memory. The server keeps the last 100, and the
-  dashboard only shows events that arrive after the page was opened.
-- The server link is 100 Mbps. A large download can therefore use most of the
-  link while a second client downloads a small file, and the per-client meters
-  show the split.
-- The control API on port 8080 is reachable from inside the Mininet network.
-  That is fine for a class project, but in a real system it should be locked
-  down.
