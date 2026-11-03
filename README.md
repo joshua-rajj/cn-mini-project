@@ -1,15 +1,13 @@
 # Project 14 - Concurrent File Sharing System with SDN
 
-A Mininet network with one file server and two clients. Clients upload and
-download files over TCP (port 9000), and a Ryu SDN controller decides who is
-allowed to reach that port.
+This project demonstrates concurrent file transfer between one server and two
+clients over TCP in a simulated Mininet network. A Ryu SDN controller controls
+who can access the server, while live dashboards show per-client bandwidth,
+chunk progress, and OpenFlow statistics.
 
-The project also has a live dashboard for the server and for each client. The
-dashboards show per-client bandwidth, chunk-level transfer progress, the SDN
-flow table and port counters, and an in-memory activity feed.
+<video src="https://cdn.jsdelivr.net/gh/joshua-rajj/cn-mini-project@main/docs/video.mp4" controls width="100%"></video>
 
-Files are transferred as binary chunks, so videos, images, archives, PDFs and
-text files all work. The server does not inspect the extension.
+[Open the demo video](docs/video.mp4)
 
 ## Objectives
 
@@ -211,18 +209,6 @@ the logged-in client.
 
 The client chunk view shows live progress and chunk events for its own
 transfers.
-
-## Video Demo
-
-A short animated walkthrough is included at
-[docs/demo.gif](docs/demo.gif). It cycles through the server overview, client
-contention, chunk progress, SDN statistics and the client dashboard views.
-
-![Project demo walkthrough](docs/demo.gif)
-
-For a full live demo, run the stack with the steps in the Setup section, open
-the server dashboard and both client dashboards, then start the large video
-download on client1 and the small file download on client2.
 
 ## Login and the SDN rules
 
