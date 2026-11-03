@@ -11,28 +11,128 @@ flow table and port counters, and an in-memory activity feed.
 Files are transferred as binary chunks, so videos, images, archives, PDFs and
 text files all work. The server does not inspect the extension.
 
-## How it works
+## Objectives
 
-- `protocol.py` defines the framed messages used by the server and the client.
-- `server/tcp_server.py` is a threaded TCP server. It stores files in
-  `server/storage` and keeps their details in `server/metadata.csv`. It also
-  keeps bandwidth totals, per-client meters, transfer history and chunk
-  telemetry in memory.
-- `server/app.py` is the server dashboard (port 5000). It starts the TCP server
-  in a background thread, exposes JSON APIs, and talks to the Ryu control API.
-- `client/client.py` is the transfer client. It can be imported by the
-  dashboard or used from the command line.
-- `client/app.py` is the client dashboard (port 5001). It has a password login,
-  sends a heartbeat, uploads and downloads files, and proxies the current
-  client's bandwidth and chunk data from the server.
-- `SDN/controller.py` is the Ryu controller. It works as a learning switch,
-  blocks port 9000 on the server until a client logs in, and collects OpenFlow
-  flow and port statistics.
-- `SDN/topology.py` builds the Mininet network and starts the apps. The server
-  link is limited to 100 Mbps so two clients have to share a real bottleneck and
-  the per-client bandwidth meters show contention.
+The project demonstrates how an application-layer file-sharing service can run
+on top of a small software-defined network. The main objectives are to:
 
-## Files
+- Build a concurrent TCP file server that can serve several clients at once.
+- Require a password before a client can use the file service.
+- Support upload, download, listing and integrity checking for any file type.
+- Use Mininet to create a realistic network with one server and two clients.
+- Use Ryu and OpenFlow to allow or block access to the file service.
+- Show live per-client bandwidth, transfer progress and chunk activity.
+- Expose OpenFlow flow-table and port statistics from the controller.
+- Demonstrate bandwidth contention when two clients share one bottleneck.
+- Keep the dashboards clean and easy to understand during a live demo.
+
+## Functionality
+
+- **Password login** - the client dashboard logs in with the shared server
+  password. The server then asks the SDN controller to allow that client's IP.
+- **Upload and download** - clients can upload files to the server and download
+  files from the server's shared storage.
+- **Any file type** - transfers are binary, so videos, images, PDFs, archives
+  and text files all work without extension-specific handling.
+- **Concurrent clients** - the server creates a thread for every connection and
+  uses locks to protect shared metadata and filename reservations.
+- **Chunked transfers** - files move in 64 KiB chunks. Uploads use a temporary
+  `.part` file and are published only after the complete file arrives.
+- **Integrity checks** - the server checks the SHA-256 of an upload before
+  publishing it, and the client checks the size and SHA-256 of a download.
+- **CSV metadata** - filename, size, owner and UTC upload time are stored in
+  `server/metadata.csv` and returned to clients as JSON.
+- **Per-client bandwidth** - the server records totals, current rates, a
+  30-second history and recent transfers for each TCP login name.
+- **Chunk telemetry** - the server tracks active transfers, progress and a
+  sampled chunk stream for both uploads and downloads.
+- **Server dashboard** - tabs for Overview, Clients, Chunks, SDN and Activity.
+- **Client dashboard** - each client sees only its own bandwidth and chunks.
+- **SDN gate** - the controller blocks TCP port 9000 until a client logs in and
+  removes the rules again on logout.
+- **OpenFlow statistics** - the controller polls flow and port counters and the
+  server dashboard shows them through the controller's `/stats` API.
+- **In-memory activity** - login, logout, uploads, downloads and SDN events are
+  shown in a feed that clears when the page is reloaded.
+
+## Project Architecture and Design
+
+### Network design
+
+```
+client1 10.0.0.11 ─┐
+client2 10.0.0.12 ─┼── s1 (OpenFlow switch) ── server 10.0.0.1
+mgmt    10.0.0.254 ─┘             │
+                                  └── Ryu controller :6653 / :8080
+```
+
+The server runs the TCP file service on port 9000 and its Flask dashboard on
+port 5000. Each client runs its own Flask dashboard on port 5001. The
+management address `10.0.0.254` is added to the switch so a browser on the host
+can reach the Mininet addresses.
+
+The link between the switch and the server is limited to 100 Mbps. Both client
+downloads share that link, which makes bandwidth contention visible in the
+per-client meters. The controller connects to the switch over OpenFlow on port
+6653 and exposes a small control/stats API on port 8080.
+
+### Components
+
+| Component | Location | Responsibility |
+| --- | --- | --- |
+| Shared protocol | `protocol.py` | Framed JSON and binary messages used by both sides |
+| File server | `server/tcp_server.py` | Authentication, file operations, metadata, concurrency, telemetry |
+| Server dashboard | `server/app.py`, `server/templates/dashboard.html` | JSON APIs, controller proxy and the server UI |
+| Transfer client | `client/client.py` | TCP login, listing, upload, download, hashing and CLI |
+| Client dashboard | `client/app.py`, `client/templates/dashboard.html` | Login, heartbeat, upload/download forms and per-client views |
+| SDN controller | `SDN/controller.py` | Learning switch, OpenFlow gate, control API and stats |
+| Network | `SDN/topology.py` | Mininet hosts, switch, links and application startup |
+| Runtime data | `server/storage`, `server/metadata.csv` | Shared files and persistent file metadata |
+
+### Request and data flow
+
+1. A client opens its dashboard and submits the server password.
+2. The client app calls the server's `POST /api/login`. The server checks the
+   password and asks the Ryu controller to grant the client's IP.
+3. The controller installs two OpenFlow rules: one for the client-to-server
+   direction on TCP port 9000 and one for the return direction.
+4. The client logs in to the TCP server with a username and password. The
+   server returns an authentication token.
+5. The client lists files, uploads a file or downloads a file over the framed
+   TCP protocol.
+6. The server records bytes, rates, transfer history and chunk events as the
+   transfer runs. The dashboards poll the JSON APIs to update their views.
+7. The controller polls flow and port counters. The server dashboard fetches
+   them from the controller's `/stats` endpoint and displays them on the SDN
+   tab.
+8. On logout, the client app asks the server to revoke access, and the
+   controller deletes the client's OpenFlow rules.
+
+### Design decisions
+
+- **Framed protocol.** Every message has a fixed magic value, a header length,
+  a JSON header and an optional binary payload. This keeps commands, metadata
+  and file bytes separate and easy to parse.
+- **Thread per connection.** A new thread handles each client, so a slow
+  upload or download does not block other clients. Shared metadata and
+  filename reservations are protected with locks.
+- **Temporary uploads.** Incoming data goes to a UUID-named `.part` file. The
+  file is renamed into place only after the full size and hash are verified, so
+  incomplete uploads never appear in the file list.
+- **One identity for statistics.** Bandwidth and chunk data are keyed by the
+  TCP login username. Each client dashboard filters the server data with its
+  own `CLIENT_NAME`, so clients cannot see each other's traffic.
+- **In-memory telemetry.** Bandwidth totals, rates, history, recent transfers,
+  chunk events and activity are intentionally in memory. They reset when the
+  server restarts and the activity feed clears when the page reloads.
+- **A real bottleneck.** The 100 Mbps server link is deliberate. It makes the
+  difference between a large download and a small competing download visible
+  instead of hiding contention behind an unrealistically fast link.
+- **SDN enforcement at the edge.** The controller does not inspect file
+  contents. It simply allows or blocks the TCP service port for each client IP,
+  which keeps the gate small and easy to demonstrate.
+
+### Repository layout
 
 ```
 protocol.py                  shared message format
@@ -54,396 +154,137 @@ SDN/
   controller.py              Ryu controller, control API and stats API
   topology.py                Mininet network
 
+docs/
+  demo.gif                   animated walkthrough of the dashboards
+  screenshots/               screenshots used in this README
+
 requirements.txt             Flask (application)
 requirements-controller.txt  Ryu (controller, Python 3.8)
 ```
 
-## What each file does
+## Contributions
 
-### `protocol.py`
+### Joshua Raj
 
-This file is used by both the server and the client, so they send the same
-bytes. Every message looks like this:
+- Built the SDN and dashboard side of the project: the Ryu controller, the
+  OpenFlow gate, the Mininet topology and the Flask integration.
+- Set up OpenFlow rules that block TCP port 9000 until a client logs in and
+  remove them when the client logs out.
+- Added the controller's control API and OpenFlow statistics collection,
+  including flow-table formatting, port counters, packet-in events and blocked
+  request counters.
+- Built the server dashboard and client dashboards, including the tabbed
+  layout, per-client bandwidth meters, chunk views, SDN view and activity feed.
+- Connected the Flask apps to the TCP server and controller APIs, and handled
+  the live polling, filtering and proxy endpoints.
+- Integrated and tested the full stack in Mininet, including the 100 Mbps
+  bottleneck and the two-client contention demonstration.
 
-```
-MAGIC (4 bytes) | header length (4 bytes) | JSON header | payload
-```
+### Jayasheel
 
-The header always has `type` and `payload_len`. Extra fields such as `token`,
-`filename` or `seq` are added when needed.
+- Developed the Python TCP server backend for the concurrent file-sharing
+  system, including socket setup, connection handling and request/response
+  processing.
+- Implemented concurrent client handling with one thread per connection and
+  locks around shared metadata and filename reservations.
+- Added password-based authentication and rejected clients that did not
+  authenticate before using file operations.
+- Implemented uploads with filename validation, a 1 GiB size limit, 64 KiB
+  chunks, UUID-based `.part` files and atomic publication with `os.replace`.
+- Implemented downloads with file checks, size transmission and chunked binary
+  transmission.
+- Built CSV metadata management for filename, size, owner and UTC upload time,
+  including creation, lookup, listing, newest-first sorting and locked writes.
+- Switched the LIST response to a JSON array so the client receives all
+  metadata records in one structured response.
+- Added validation and error handling for unsupported commands, invalid
+  filenames, incomplete transfers, connection failures and unexpected errors.
+- Used Python sockets, threading, CSV, JSON, `os`, `pathlib`, `uuid` and
+  `datetime` to implement the backend.
 
-Constants:
+### Joel
 
-- `MAGIC` - marks the start of a frame.
-- `MAX_HEADER` - largest allowed JSON header (1 MiB).
-- `MAX_PAYLOAD` - largest allowed payload (8 MiB).
-- `CHUNK_SIZE` - file data is sent in 64 KiB pieces.
+- Developed the client-side transfer system in `client/client.py` and its
+  integration with the shared protocol.
+- Implemented the client connection lifecycle, username/password login,
+  password hashing, authentication tokens and automatic re-authentication.
+- Added file listing, upload and download operations using 64 KiB chunks and
+  the project's custom application-layer protocol.
+- Added SHA-256 integrity verification and size checks for downloads, plus
+  detection of corrupted or incomplete transfers.
+- Used Python threading to support parallel transfers and recorded file size,
+  transfer duration and speed for each operation.
+- Built the command-line interface with `argparse`, including `ls`, `put` and
+  `get` commands, configurable host/credentials and parallel transfer options.
+- Used Python sockets, `hashlib`, `threading`, `argparse`, `json`, `os` and
+  `time` to make the client reliable and easy to use.
 
-Functions:
+## Screenshots
 
-- `recv_exact(sock, size)` - reads exactly `size` bytes from a socket. It keeps
-  calling `recv` until it has everything and raises `ConnectionError` if the
-  other side closes.
-- `send_frame(sock, msg_type, payload=b"", **fields)` - builds the JSON header,
-  adds the extra fields, and sends the magic, header length, header and payload.
-- `recv_frame(sock)` - reads one full frame, checks the magic and the sizes, and
-  returns `(header, payload)`.
-- `sha256_file(path)` - reads a file in 1 MiB blocks and returns its SHA-256
-  hash as a hex string.
+The screenshots below were captured from the running Mininet/Ryu stack while a
+large video download on client1 was competing with a smaller download on
+client2.
 
-`ProtocolError` is raised when a frame is malformed.
+### Server overview
 
-### `server/tcp_server.py`
+![Server overview](docs/screenshots/server-overview.png)
 
-This is the file server. It listens on port 9000 and starts one thread for each
-client, so several transfers can run at the same time.
+The server overview shows the shared 100 Mbps link, total traffic, the live
+per-client meters and the client details table.
 
-Settings:
+### Server clients
 
-- `HOST` and `PORT` - where the server listens.
-- `MAX_FILE_SIZE` - largest upload (1 GiB).
-- `SERVER_PASSWORD` - shared password, `pass123` by default. It can be changed
-  with the `SERVER_PASSWORD` environment variable.
-- `CLIENT_TIMEOUT` - a client is shown as online for 30 seconds after its last
-  login.
-- `CHUNK_LOG_LIMIT` - number of chunk events kept in memory (400).
-- `CHUNK_EVENT_EVERY` - every 50th chunk is written to the visible event log.
-- `STORAGE` - folder with the real files.
-- `METADATA` - CSV file with one row per uploaded file.
-- `FIELDS` - the five metadata columns.
+![Server clients](docs/screenshots/server-clients.png)
 
-Shared state:
+The Clients tab breaks the traffic down by client and makes the bandwidth
+split visible during contention.
 
-- `metadata_lock` - protects the CSV and the reserved filenames.
-- `reserved` - filenames that are being uploaded right now.
-- `clients` - logged-in clients and when they were last seen.
-- `clients_lock` - protects `clients`.
-- `stats_lock` - protects all bandwidth state below.
-- `buckets` - total bytes per second, used for the server chart.
-- `client_buckets` - bytes per second for each username.
-- `client_totals` - total bytes and transfer counts for each username.
-- `recent` - the last 20 finished transfers.
-- `totals` - total bytes and transfer counts since the server started.
-- `chunk_lock` - protects the chunk state below.
-- `chunk_events` - the newest 400 sampled chunk events.
-- `chunk_transfers` - active and recently finished transfers.
-- `chunk_id` - the next chunk event number.
-- `activity_lock` - protects the activity feed.
-- `activity` - the last 100 activity messages (in memory only).
-- `activity_id` - the next activity number.
+### Server chunks
 
-Functions:
+![Server chunks](docs/screenshots/server-chunks.png)
 
-- `start_metadata()` - creates `metadata.csv` with the column headers if it
-  does not exist yet.
-- `read_metadata_file()` - reads every row from the CSV. The caller must hold
-  `metadata_lock`.
-- `get_file(filename)` - looks up one file in the CSV and returns its row, or
-  `None`.
-- `list_files()` - returns all CSV rows sorted by upload time, newest first.
-- `save_metadata(filename, size, owner, sha)` - appends one row with the
-  filename, size, owner, UTC time and SHA-256.
-- `valid_filename(name)` - returns `False` for empty names, `.`, `..`, names
-  with `/` or `\`, and names with a NUL byte.
-- `reserve_filename(name)` - checks the disk, the reservations and the CSV. If
-  the name is free, it reserves it and returns `True`; otherwise `False`.
-- `release_filename(name)` - removes a reservation when an upload finishes.
-- `empty_client(name)` - returns the starting per-client record with zero
-  counters, an empty IP and an empty last-seen time.
-- `remember_client(username, ip)` - stores a client in `clients` and creates or
-  updates its record in `client_totals`.
-- `active_clients()` - removes clients that have not logged in for 30 seconds
-  and returns the rest with a readable `last_seen` time.
-- `record_bytes(username, direction, amount)` - adds bytes to the current global
-  one-second bucket, the client's one-second bucket, the global total and the
-  client total.
-- `record_transfer(direction, username, filename, size, seconds)` - calculates
-  Mbps, updates the global and per-client transfer counts, and puts the
-  transfer at the front of `recent` (keeping only 20).
-- `rates_from(bucket_map, now)` - sums the last five seconds and divides by five
-  to get the average upload and download rate.
-- `history_from(bucket_map, now)` - returns the last 30 one-second buckets for
-  the chart.
-- `last_seen_text(epoch)` - formats a last-seen timestamp as `HH:MM:SS`.
-- `client_info(name, item, bucket_map, online, now)` - builds one client's
-  dashboard record: name, IP, online flag, last-seen time, current rates,
-  totals, counts and 30-second history.
-- `bandwidth_stats(client=None)` - removes old buckets and returns either the
-  whole server summary or one client's summary. The whole summary has global
-  rates, totals, counts, history, recent transfers and the `clients` list. A
-  client summary also has that client's recent transfers and an empty `clients`
-  list.
-- `add_activity(text)` - adds a timestamped event to the in-memory activity
-  list and drops the oldest event after 100.
-- `activity_log(since=0)` - returns `last` (the newest event number) and the
-  events newer than `since`. The dashboard uses this to fetch only new events.
-- `start_chunk_transfer(client, direction, filename, size)` - creates a transfer
-  record with a short ID, total chunk count, byte count, progress and timing.
-- `update_chunk_transfer(transfer_id, size)` - adds one chunk to a transfer's
-  progress. It is called for every chunk, not just sampled events.
-- `finish_chunk_transfer(transfer_id, ok=True, error="")` - marks a transfer as
-  finished, successful or failed, and stores a short error.
-- `prune_chunk_transfers()` - keeps active transfers plus the last 10 finished
-  transfers and removes finished transfers after two minutes.
-- `add_chunk_event(client, direction, filename, number, size, total_chunks)` -
-  records a visible chunk event. It samples chunk 1, every 50th chunk and the
-  final chunk so a large video does not flood the page. Events are stored newest
-  first and limited to 400.
-- `chunk_stats(client=None)` - returns up to 120 events and 12 transfers,
-  filtered by client when a client name is given. Active transfers are listed
-  before finished ones.
-- `send_error(sock, code, message)` - sends an `ERROR` frame.
-- `check_password(sock, address)` - reads the first frame, which must be `AUTH`.
-  It hashes `SERVER_PASSWORD` and compares it with `password_sha256`. On success
-  it creates a random token, sends `AUTH_OK`, records the client, and returns
-  `(token, username)`.
-- `do_upload(sock, header, username)` - handles `UPLOAD_INIT`. It checks the
-  name and size, reserves the name, sends `OK`, receives `CHUNK` frames into a
-  `.part` file, records chunk progress and events, checks the size and SHA-256,
-  renames the file, and saves the metadata.
-- `do_download(sock, header, username)` - handles `DOWNLOAD_REQ`. It checks the
-  metadata and the file, sends `DOWNLOAD_INIT` with the size and hash, sends
-  `CHUNK` frames, records progress and events, and finishes with
-  `DOWNLOAD_DONE`.
-- `do_list(sock)` - builds a list with `filename`, `size`, `owner`,
-  `upload_time` and `sha256`, and sends it as `LIST_RESP`.
-- `handle_client(sock, address)` - logs the client in and then loops over
-  messages: `LIST`, `UPLOAD_INIT`, `DOWNLOAD_REQ` or `QUIT`. It checks the token
-  for commands that need a login.
-- `serve()` - creates the metadata file, binds the socket, listens, and starts a
-  daemon thread for every accepted connection.
+The Chunks tab shows transfer progress and the sampled chunk stream for both
+uploads received by the server and downloads sent by the server.
 
-Messages used by the server:
+### Server SDN statistics
 
-```
-AUTH          client -> server    username, password_sha256
-AUTH_OK       server -> client    token
-LIST          client -> server    token
-LIST_RESP     server -> client    JSON list in the payload
-UPLOAD_INIT   client -> server    token, filename, size, sha256
-OK            server -> client
-CHUNK         both ways           file bytes, seq
-UPLOAD_DONE   client -> server    sha256, chunks
-UPLOAD_OK     server -> client    filename, size, sha256
-DOWNLOAD_REQ  client -> server    token, filename
-DOWNLOAD_INIT server -> client    filename, size, sha256
-DOWNLOAD_DONE server -> client    chunks
-ERROR         server -> client    code, message
-QUIT          client -> server    token
-```
+![Server SDN statistics](docs/screenshots/server-sdn.png)
 
-### `server/app.py`
+The SDN tab shows the switch, flow table, port counters and packet-in activity
+reported by Ryu.
 
-This is the Flask app for the server dashboard.
+### Client overview
 
-- `controller_call(path, ip)` - sends `{"ip": ip}` to the Ryu control API. It is
-  used for `/grant` and `/revoke`.
-- `controller_get(path)` - reads a JSON response from the Ryu control API. It is
-  used for `/stats`.
-- `home()` - renders `templates/dashboard.html`.
-- `client_list()` - `GET /api/clients`, returns the output of `active_clients()`.
-- `bandwidth()` - `GET /api/bandwidth`, returns the output of
-  `bandwidth_stats()`. The optional `client` query parameter returns one
-  client's data instead of the whole server summary.
-- `chunks()` - `GET /api/chunks`, returns the output of `chunk_stats()`. The
-  optional `client` query parameter filters events and transfers.
-- `sdn()` - `GET /api/sdn`, proxies the controller's `/stats` response. It
-  returns HTTP 502 when the controller cannot be reached.
-- `activity()` - `GET /api/activity`, returns `activity_log()` for the optional
-  `since` query parameter.
-- `login()` - `POST /api/login`. It checks the JSON password against
-  `SERVER_PASSWORD`, then grants `request.remote_addr` on the controller. The
-  JSON body may also include `name` so the event shows the client name.
-- `logout()` - `POST /api/logout`. It revokes `request.remote_addr` and adds a
-  logout event.
+![Client overview](docs/screenshots/client-overview.png)
 
-At the bottom, it starts `serve()` in a daemon thread and runs Flask on port
-5000 with `threaded=True`, so the dashboard can keep polling while a large file
-is being uploaded or downloaded.
+A client dashboard shows the file list, upload form and only that client's
+traffic.
 
-### `client/client.py`
+### Client bandwidth
 
-This file contains the transfer client and its command line.
+![Client bandwidth](docs/screenshots/client-bandwidth.png)
 
-`ClientError` stores an error `code` and `message` and prints them as
-`code: message`.
+The client bandwidth view shows the 30-second trend and recent transfers for
+the logged-in client.
 
-`Client` methods:
+### Client chunks
 
-- `connect()` - opens the TCP connection with a 10-second connect timeout and a
-  30-second read timeout.
-- `close()` - closes the socket and clears the token.
-- `__enter__()` / `__exit__()` - allow `with Client(...) as client:`.
-- `login(username, password)` - saves the username, hashes the password with
-  SHA-256, and calls `auth()`.
-- `auth()` - sends `AUTH`, reads the reply, raises on `ERROR`, and stores the
-  token from `AUTH_OK`.
-- `request(msg_type, **fields)` - sends one request with the token and reads
-  one reply. If the server says `NOT_AUTHENTICATED`, it logs in again and
-  retries once. Any other `ERROR` becomes a `ClientError`.
-- `list_files()` - sends `LIST` and returns the decoded JSON list from
-  `LIST_RESP`.
-- `upload(path, name=None)` - calculates the size and SHA-256, sends
-  `UPLOAD_INIT`, sends the file as `CHUNK` frames, sends `UPLOAD_DONE`, and
-  waits for `UPLOAD_OK`.
-- `download(filename, dest=None)` - sends `DOWNLOAD_REQ`, writes incoming
-  chunks to `dest + ".part"`, checks the chunk numbers, size and SHA-256, then
-  renames the file to `dest`.
-- `quit()` - sends `QUIT` and closes the connection.
-- `record(op, filename, size, start)` - calculates the duration and Mbps and
-  keeps the result in `self.stats`.
+![Client chunks](docs/screenshots/client-chunks.png)
 
-Other functions:
+The client chunk view shows live progress and chunk events for its own
+transfers.
 
-- `format_stat(item)` - formats one transfer for the command line.
-- `run_parallel(host, port, user, password, tasks, limit)` - starts one thread
-  per file. A semaphore limits how many connections run at the same time, and a
-  lock protects the result and error lists.
-- `main(argv=None)` - reads the command line (`--host`, `--port`, `-u`, `-p`,
-  `-j`, and `ls`, `put` or `get`) and runs one transfer or several parallel
-  transfers.
+## Video Demo
 
-### `client/app.py`
+A short animated walkthrough is included at
+[docs/demo.gif](docs/demo.gif). It cycles through the server overview, client
+contention, chunk progress, SDN statistics and the client dashboard views.
 
-This is the Flask app for the client dashboard.
+![Project demo walkthrough](docs/demo.gif)
 
-- `page(error=None)` - renders `templates/dashboard.html` with the client name,
-  server address, login state and an optional error.
-- `post_to_server(path, data)` - sends JSON to the server dashboard on port 5000
-  and returns the JSON reply. An HTTP error status is also decoded so the
-  password check can show `Wrong password.`
-- `get_from_server(path)` - reads a JSON response from the server dashboard.
-  The client bandwidth and chunk APIs use this.
-- `send_heartbeat()` - every 5 seconds, if the browser is logged in, it opens a
-  TCP connection, logs in, and closes it. This keeps the client in the server's
-  online list.
-- `home()` - `GET /`, the dashboard page.
-- `login()` - `POST /login`, checks the password through the server, sets
-  `logged_in` and keeps the password for TCP logins.
-- `logout()` - `POST /logout`, tells the server to revoke this IP, then clears
-  the login state.
-- `files()` - `GET /api/files`, logs in over TCP and returns `list_files()`.
-- `bandwidth()` - `GET /api/bandwidth`, asks the server for
-  `/api/bandwidth?client=<CLIENT_NAME>` and returns the reply. It requires the
-  dashboard login.
-- `chunks()` - `GET /api/chunks`, asks the server for
-  `/api/chunks?client=<CLIENT_NAME>` and returns the reply. It requires the
-  dashboard login.
-- `download(name)` - `GET /download/<name>`, logs in over TCP, downloads the
-  file into `downloads/`, and sends it to the browser.
-- `upload()` - `POST /upload`, saves the browser upload to a temporary file,
-  sends it with `Client.upload()`, and deletes the temporary file.
-
-At the bottom, it starts the heartbeat thread and Flask on port 5001 with
-`threaded=True`, so the dashboard keeps updating while a large transfer runs.
-
-### `SDN/controller.py`
-
-This is the Ryu application.
-
-Settings:
-
-- `SERVER_IP` - the protected server (`10.0.0.1`).
-- `TRANSFER_PORT` - the protected port (`9000`).
-- `REST_PORT` - the control and stats API port (`8080`).
-- Flow priorities: `TABLE_MISS` 0, `LEARNED` 10, `PROTECTED` 100, `ALLOW` 200.
-
-Shared state:
-
-- `datapaths` - connected switches, keyed by datapath ID.
-- `mac_table` - learned MAC addresses for the learning switch.
-- `allowed` - client IPs that may reach the server's port 9000.
-- `blocked` - number of packets blocked by the controller.
-- `stats_lock` - protects the statistics state.
-- `flows` - latest flow statistics for each switch.
-- `ports` - latest port statistics for each switch.
-- `packet_in_count`, `grant_count`, `revoke_count` - counters for the dashboard.
-- `started_at` - controller start time, used for uptime.
-
-Functions and classes:
-
-- `add_flow(dp, priority, match, actions)` - sends one `OFPFlowMod` to a switch.
-- `allow_client(dp, ip)` - installs two priority-200 flows: client to
-  `SERVER_IP:TRANSFER_PORT`, and the replies from the server back to the client.
-  Both use the `NORMAL` action.
-- `remove_client(dp, ip)` - deletes those two flows.
-- `match_text(match)` - turns an OpenFlow match into a short readable string,
-  such as `eth_type=2048, ip_proto=6, ipv4_dst=10.0.0.1, tcp_dst=9000`. An empty
-  match becomes `any`.
-- `switch_name(dp_id)` - returns `s<id>` for small datapath IDs and a hex string
-  for large random IDs.
-- `build_stats()` - copies the flow and port statistics, adds switch names,
-  sorts flows by byte count, and returns the switch list, allowed IPs, blocked
-  count, packet-in count, grant/revoke counts, MAC count and uptime.
-- `ControlHandler` - the small HTTP server:
-  - `reply(data, status)` - sends a JSON response.
-  - `do_GET()` - `/state` returns the allowed IPs and the blocked packet count;
-    `/stats` returns `build_stats()`.
-  - `do_POST()` - `/grant` adds an IP and installs its flows; `/revoke` removes
-    the IP and deletes its flows.
-  - `log_message()` - suppresses the default HTTP request log.
-- `Firewall` - the Ryu app:
-  - `__init__` - starts the control API in a daemon thread and starts the
-    periodic statistics poller.
-  - `switch_connected` - installs the table-miss rule, the priority-100 rule
-    that sends server port 9000 traffic to the controller, and any allow rules
-    for clients that logged in earlier. It also clears the old stats for that
-    switch and requests new stats.
-  - `state_change` - removes a switch from `datapaths`, `flows` and `ports` when
-    Ryu reports it as disconnected, so the dashboard does not show dead
-    switches.
-  - `packet_in` - learns MAC addresses. For traffic to `SERVER_IP:9000` it lets
-    the packet through only if the source IP is in `allowed`; otherwise it
-    increments `blocked`. All other traffic is forwarded like a normal learning
-    switch.
-  - `flow_stats_reply` - receives `OFPFlowStatsReply`, stores priority, match,
-    packets, bytes and duration for the busiest 30 flows.
-  - `port_stats_reply` - receives `OFPPortStatsReply`, stores packet, byte,
-    error and drop counters for every port.
-  - `poll_stats` - every 2 seconds, asks every connected switch for flow and
-    port statistics.
-  - `request_stats(dp)` - sends one `OFPFlowStatsRequest` and one
-    `OFPPortStatsRequest`.
-  - `send_out(dp, msg, in_port, out_port)` - sends an `OFPPacketOut` back to
-    the switch.
-
-### `SDN/topology.py`
-
-- `start_app(host, folder, variables, name)` - builds the environment variables,
-  log path and command, then starts `app.py` inside one Mininet host.
-- `main()` - creates the controller, the server, two clients and the switch,
-  adds the management host (`10.0.0.254`) so the browser can reach the
-  dashboards, runs `pingAll()`, starts the apps, and stops the network on
-  Ctrl-C. The server link uses `TCLink` with `bw=100`; both clients download
-  through that shared 100 Mbps bottleneck.
-
-### Templates
-
-- `server/templates/dashboard.html` - the server page. It has five tabs:
-  - **Overview** - global upload/download rates, totals, online clients, a
-    30-second chart, the latest 10 transfers, and one live meter per client.
-  - **Clients** - a card and meter for every client, a per-client trend chart
-    with Download/Upload buttons, and a details table with IP, status, rates and
-    totals.
-  - **Chunks** - active transfer cards with progress and the sampled chunk
-    stream.
-  - **SDN** - controller uptime, packet-in, grant, revoke and blocked counters,
-    allowed IPs, switch list, flow table and port counters.
-  - **Activity** - events that arrive after the page was opened. The feed
-    starts empty on every reload because activity is kept in memory only.
-
-  The page polls `/api/bandwidth`, `/api/chunks`, `/api/sdn`, `/api/clients` and
-  `/api/activity`. The tabs use URL hashes such as `#clients`, so a tab can be
-  linked directly.
-- `client/templates/dashboard.html` - the client page. It has the password
-  form, then three tabs:
-  - **Overview** - this client's upload/download rates and totals, the upload
-    form and the server file list.
-  - **My bandwidth** - this client's 30-second chart and recent transfers.
-  - **My chunks** - this client's active transfers and sampled chunk stream.
-
-  It calls `/api/files` every 10 seconds, and `/api/bandwidth` and `/api/chunks`
-  every second. Both APIs are filtered by the client's login name.
+For a full live demo, run the stack with the steps in the Setup section, open
+the server dashboard and both client dashboards, then start the large video
+download on client1 and the small file download on client2.
 
 ## Login and the SDN rules
 
